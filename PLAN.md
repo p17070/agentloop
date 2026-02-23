@@ -126,24 +126,94 @@ This demands a **parameter filter** layer, not just a baseURL swap.
 
 ---
 
+## Response Normalization (Key Finding from v3 Research)
+
+**The original spec treated responses as flat `{ text, tool_calls }` — this was wrong.**
+
+Research revealed that providers return 10+ distinct content types in responses:
+
+| Content Type | Providers |
+|---|---|
+| Text | All 11 |
+| Tool calls | 10 (not Perplexity) |
+| Reasoning/thinking | 8 (3 different field names: `reasoning`, `reasoning_content`, `<think>` tags) |
+| Citations | 5 (5 completely different formats) |
+| Image output | 1 (Gemini only, inline in chat) |
+| Audio output | 2 (OpenAI, Gemini — different formats) |
+| Code execution | 1 (Gemini only) |
+| Server tools | 1 (Anthropic only) |
+| Search results | 3 (Perplexity, Gemini, Anthropic — all different) |
+
+### The Solution: Content-Part Discriminated Union
+
+Every response is normalized to `content: ResponsePart[]` — an array of typed parts:
+
+```typescript
+type ResponsePart =
+  | { type: "text"; text: string; citations?: Citation[] }
+  | { type: "tool_call"; id: string; name: string; arguments: string }
+  | { type: "thinking"; thinking: string; signature?: string }
+  | { type: "redacted_thinking"; data: string }
+  | { type: "image"; mimeType: string; data: string }
+  | { type: "audio"; mimeType: string; data: string; transcript?: string }
+  | { type: "code_execution"; language: string; code: string }
+  | { type: "code_result"; outcome: "ok" | "error" | "timeout"; output: string }
+  | { type: "server_tool_call"; id: string; name: string; arguments: Record<string, unknown> }
+  | { type: "server_tool_result"; toolCallId: string; content: unknown };
+```
+
+### Critical Normalization Quirks Discovered
+
+| Issue | Provider | Fix |
+|---|---|---|
+| `finish_reason: "eos"` | Together AI | Map to `"stop"` |
+| `finish_reason: "insufficient_system_resource"` | DeepSeek | Map to `"error"` |
+| `choices[].index` is string | Mistral | Coerce `Number(index)` |
+| `function.arguments` is object | Fireworks | Coerce `JSON.stringify(args)` |
+| Streaming usage in `x_groq.usage` | Groq | Extract from nested object |
+| Reasoning as `<think>` tags in content | Together, Fireworks (DeepSeek R1) | Parse tags, split into ThinkingPart |
+| Reasoning field: `reasoning` | Groq, Together | Normalize to ThinkingPart |
+| Reasoning field: `reasoning_content` | DeepSeek, Mistral, Fireworks | Normalize to ThinkingPart |
+| Perplexity `citations[]` at top level | Perplexity | Map to UrlCitation on TextPart |
+| Anthropic citations in text blocks | Anthropic | Map 4 types to unified Citation |
+| Gemini grounding in candidate metadata | Google | Map groundingSupports to UrlCitation |
+| OpenAI annotations on message | OpenAI | Map url_citation to UrlCitation |
+
+### Streaming: Content-Part Lifecycle Events
+
+Streaming uses a **content-part lifecycle model** instead of raw deltas:
+
+```
+message.start → content.start → content.delta* → content.done → ... → message.delta → message.done
+```
+
+This maps cleanly from all providers:
+- **OpenAI/compat**: SSE `data:` lines with `delta` objects → lifecycle events
+- **Anthropic**: Named SSE events (content_block_start/delta/stop) → direct mapping
+- **Gemini**: Full response chunks → diff against previous to generate deltas
+
+---
+
 ## Architecture: Minimal Code, Maximum Coverage
 
-### Project Structure (14 files, ~900 lines)
+### Project Structure (16 files, ~1400 lines)
 
 ```
 agentloop/
 ├── src/
-│   ├── index.ts                    # Public barrel export (~20 lines)
-│   ├── types.ts                    # All types — discriminated unions (~100 lines)
+│   ├── index.ts                    # Public barrel export (~30 lines)
+│   ├── types.ts                    # All types — discriminated unions (~200 lines)
 │   ├── client.ts                   # AgentLoop class — routing + middleware (~120 lines)
 │   ├── provider.ts                 # OpenAI-compatible provider — fetch + SSE (~150 lines)
+│   ├── normalize.ts                # Response normalization — all OpenAI-compat quirks (~150 lines)
 │   ├── registry.ts                 # Provider config table + param filters (~80 lines)
 │   ├── transforms/
-│   │   ├── anthropic.ts            # Anthropic ↔ OpenAI transforms (~180 lines)
-│   │   └── google.ts              # Gemini ↔ OpenAI transforms (~180 lines)
+│   │   ├── anthropic.ts            # Anthropic ↔ unified transforms (~220 lines)
+│   │   └── google.ts              # Gemini ↔ unified transforms (~250 lines)
 │   ├── middleware.ts               # compose() + retry/fallback/cache/logger (~120 lines)
 │   └── errors.ts                   # Unified error hierarchy (~50 lines)
 ├── tests/
+│   ├── normalize.test.ts           # Response normalization tests (all quirks)
 │   ├── provider.test.ts
 │   ├── transforms.test.ts
 │   ├── middleware.test.ts
@@ -157,15 +227,16 @@ agentloop/
 
 | Component | Lines | Covers |
 |---|---|---|
+| `types.ts` | ~200 | All types: ResponsePart (10 variants), Citation (3 variants), Usage, streaming events |
 | `provider.ts` | ~150 | HTTP dispatch + SSE parsing for ALL 9 OpenAI-compat providers |
+| `normalize.ts` | ~150 | Response normalization: reasoning fields, citations, finish reasons, usage, type coercion |
 | `registry.ts` | ~80 | Config + param filters for 9 providers (avg ~8 lines each) |
-| `transforms/anthropic.ts` | ~180 | Full Anthropic Messages API mapping |
-| `transforms/google.ts` | ~180 | Full Gemini generateContent mapping |
-| `types.ts` | ~100 | Complete type system |
+| `transforms/anthropic.ts` | ~220 | Full Anthropic mapping (7 content block types, 4 citation types, streaming) |
+| `transforms/google.ts` | ~250 | Full Gemini mapping (7 part types, grounding, image/audio/code output, streaming) |
 | `client.ts` | ~120 | Routing + middleware + structured output |
 | `middleware.ts` | ~120 | 5 middleware functions |
 | `errors.ts` | ~50 | Error normalization |
-| **Total** | **~900** | **11 providers, full feature set** |
+| **Total** | **~1400** | **11 providers, all modalities, full normalization** |
 
 ---
 
@@ -210,21 +281,22 @@ Zero per-provider code. Pure config.
 
 ---
 
-## Implementation Phases (unchanged, still 4)
+## Implementation Phases (updated for v3)
 
-### Phase 1: Core (~400 lines, 4 files)
-- `types.ts` — complete type system
+### Phase 1: Types + Core (~580 lines, 5 files)
+- `types.ts` — complete type system (ResponsePart union, Citation union, Usage, streaming events)
 - `provider.ts` — OpenAI-compat provider (fetch + SSE streaming)
+- `normalize.ts` — response normalization (reasoning fields, citations, finish reasons, type coercion)
 - `registry.ts` — all 9 compat providers as config entries
 - `errors.ts` — error mapping
 
-**Delivers:** Chat + streaming + tools for OpenAI, Groq, Together, Mistral, DeepSeek, Fireworks, Perplexity, Ollama, Cohere.
+**Delivers:** Chat + streaming + tools + reasoning + citations for OpenAI, Groq, Together, Mistral, DeepSeek, Fireworks, Perplexity, Ollama, Cohere. All response quirks handled.
 
-### Phase 2: Transforms (~360 lines, 2 files)
-- `transforms/anthropic.ts` — request/response/stream mapping
-- `transforms/google.ts` — request/response/stream mapping
+### Phase 2: Transforms (~470 lines, 2 files)
+- `transforms/anthropic.ts` — request/response/stream mapping (7 block types, 4 citation types)
+- `transforms/google.ts` — request/response/stream mapping (7 part types, grounding, image/audio/code)
 
-**Delivers:** Full 11-provider coverage.
+**Delivers:** Full 11-provider coverage including image output, audio output, code execution, server tools.
 
 ### Phase 3: Client + Middleware (~240 lines, 2 files)
 - `client.ts` — AgentLoop class, routing, structured output
@@ -232,23 +304,27 @@ Zero per-provider code. Pure config.
 
 **Delivers:** Production-ready SDK with middleware.
 
-### Phase 4: Polish
+### Phase 4: Polish + Tests
 - `index.ts` — barrel export
-- Tests, build config, package.json
+- `normalize.test.ts` — test all provider quirks (eos, string index, parsed args, etc.)
+- Other tests, build config, package.json
 
 ---
 
-## Summary: What Changed from v1
+## Summary: What Changed from v1 → v3
 
-| Aspect | Ultraplan v1 | Ultraplan v2 |
-|---|---|---|
-| Provider research | Assumed | Verified against actual API docs |
-| Cohere handling | Separate adapter needed | OpenAI-compat endpoint — config only |
-| Param compatibility | Assumed uniform | Per-provider param filter config |
-| Mistral `seed` | Assumed compatible | Renamed to `random_seed` |
-| Temperature ranges | Assumed uniform | Mistral/Cohere clamped to 0-1 |
-| Perplexity tools | Assumed supported | Not supported — auto-stripped |
-| Ollama tool_choice | Assumed supported | Not supported — auto-stripped |
-| Design patterns | Adapter only | Strategy + Chain of Resp + Proxy + Registry + Discriminated Unions |
-| Files | 12 | 14 (added tests) |
-| Lines | ~800 | ~900 (more precise transforms) |
+| Aspect | v1 (assumed) | v2 (request research) | v3 (response research) |
+|---|---|---|---|
+| Response format | Flat `{ text, tool_calls }` | Same | `content: ResponsePart[]` — 10 part types |
+| Streaming format | Raw deltas | Same | Content-part lifecycle events |
+| Reasoning/thinking | Not handled | Not handled | Normalized from 3 field names + `<think>` tags |
+| Citations | Not handled | Not handled | Unified from 5 provider formats |
+| Image output | Not handled | Not handled | Gemini inlineData → ImagePart |
+| Audio output | Not handled | Not handled | OpenAI audio + Gemini PCM → AudioPart |
+| Code execution | Not handled | Not handled | Gemini executableCode → CodeExecutionPart |
+| Server tools | Not handled | Not handled | Anthropic server_tool_use → ServerToolCallPart |
+| finish_reason | 4 values | 4 values | 30+ raw values → 5 normalized |
+| Usage details | 3 fields | 3 fields | Reasoning, cache, audio, per-modality breakdowns |
+| Provider quirks | None | Request-side only | + Together "eos", Mistral string index, Fireworks parsed args, Groq x_groq, DeepSeek insufficient_system_resource |
+| Files | 12 | 14 | 16 |
+| Lines | ~800 | ~900 | ~1400 |

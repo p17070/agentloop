@@ -95,52 +95,298 @@ type ResponseFormat =
   | { type: "json_schema"; json_schema: { name: string; strict?: boolean; schema: Record<string, unknown> } };
 ```
 
-### 1.4 Response
+### 1.4 Unified Response (Normalized)
+
+The response format is the core innovation. Every provider's response — whether OpenAI, Anthropic,
+Gemini, or any OpenAI-compatible provider — is normalized into this **single shape**. Users never
+see provider-specific response formats.
+
+**Design principle:** Content is always an **array of typed parts** (discriminated union).
+This naturally models all modalities: text, tool calls, reasoning, images, audio, code execution,
+citations, and server tools. Simple text responses are just `[{ type: "text", text: "..." }]`.
 
 ```typescript
+// ─── Response ───────────────────────────────────────────────────────────
+
 interface ChatResponse {
   id: string;
-  model: string;
-  provider: string;                       // injected by AgentLoop
+  provider: string;                               // e.g. "openai", "anthropic", "google"
+  model: string;                                   // e.g. "gpt-4o", "claude-sonnet-4-20250514"
   choices: Choice[];
   usage: Usage;
+  providerMetadata?: Record<string, unknown>;     // provider-specific extras (pass-through)
 }
 
 interface Choice {
   index: number;
-  message: ChatMessage;
-  finish_reason: "stop" | "tool_calls" | "length" | "content_filter";
+  content: ResponsePart[];                         // ← ALWAYS an array of content parts
+  finishReason: FinishReason;
 }
+
+type FinishReason = "stop" | "length" | "tool_calls" | "content_filter" | "error";
+
+// ─── Content Parts (Discriminated Union) ────────────────────────────────
+//
+// This union covers ALL content types from ALL providers:
+//   OpenAI:    text, tool_call, audio, annotations (citations)
+//   Anthropic: text, tool_use, thinking, redacted_thinking, server_tool_use, web_search_tool_result, citations
+//   Gemini:    text, functionCall, inlineData (image/audio), executableCode, codeExecutionResult, thought
+//   DeepSeek/Groq/Together/Mistral/Fireworks: text, tool_call, reasoning_content/reasoning
+//   Perplexity: text + citations/search_results
+
+type ResponsePart =
+  // ── Text (all providers) ──
+  | TextPart
+
+  // ── Tool Calling (most providers) ──
+  | ToolCallPart
+
+  // ── Reasoning / Thinking ──
+  | ThinkingPart
+  | RedactedThinkingPart
+
+  // ── Multimodal Output ──
+  | ImagePart
+  | AudioPart
+
+  // ── Code Execution (Gemini) ──
+  | CodeExecutionPart
+  | CodeResultPart
+
+  // ── Server Tools (Anthropic) ──
+  | ServerToolCallPart
+  | ServerToolResultPart;
+
+interface TextPart {
+  type: "text";
+  text: string;
+  citations?: Citation[];                          // Normalized from all providers' citation formats
+}
+
+interface ToolCallPart {
+  type: "tool_call";
+  id: string;                                      // Call ID (generated for Gemini if absent)
+  name: string;
+  arguments: string;                               // ALWAYS JSON string (coerced from Fireworks objects)
+}
+
+interface ThinkingPart {
+  type: "thinking";
+  thinking: string;                                // Reasoning text
+  signature?: string;                              // Anthropic: verification signature. Gemini: thoughtSignature
+}
+
+interface RedactedThinkingPart {
+  type: "redacted_thinking";
+  data: string;                                    // Anthropic: encrypted opaque data
+}
+
+interface ImagePart {
+  type: "image";
+  mimeType: string;                                // e.g. "image/png", "image/jpeg"
+  data: string;                                    // Base64-encoded image bytes
+}
+
+interface AudioPart {
+  type: "audio";
+  mimeType: string;                                // e.g. "audio/wav", "audio/L16;rate=24000"
+  data: string;                                    // Base64-encoded audio bytes
+  transcript?: string;                             // OpenAI: text transcript of generated audio
+  expiresAt?: number;                              // OpenAI: Unix timestamp for multi-turn reference
+}
+
+interface CodeExecutionPart {
+  type: "code_execution";
+  language: string;                                // e.g. "python"
+  code: string;                                    // The generated code
+}
+
+interface CodeResultPart {
+  type: "code_result";
+  outcome: "ok" | "error" | "timeout";
+  output: string;                                  // stdout (success) or stderr (error)
+}
+
+interface ServerToolCallPart {
+  type: "server_tool_call";
+  id: string;                                      // Anthropic: "srvtoolu_..." prefix
+  name: string;                                    // e.g. "web_search"
+  arguments: Record<string, unknown>;
+}
+
+interface ServerToolResultPart {
+  type: "server_tool_result";
+  toolCallId: string;                              // Matches server_tool_call.id
+  content: unknown;                                // Anthropic: web_search_result[] or error object
+}
+
+// ─── Citations (Normalized from 5 different provider formats) ───────────
+
+type Citation =
+  | UrlCitation
+  | DocumentCitation
+  | PageCitation;
+
+interface UrlCitation {
+  type: "url";
+  url: string;
+  title?: string;
+  citedText?: string;
+  startIndex?: number;                             // Character offset in response text
+  endIndex?: number;
+}
+
+interface DocumentCitation {
+  type: "document";
+  documentIndex: number;
+  documentTitle?: string;
+  citedText?: string;
+  startCharIndex?: number;
+  endCharIndex?: number;
+}
+
+interface PageCitation {
+  type: "page";
+  documentIndex: number;
+  documentTitle?: string;
+  citedText?: string;
+  startPage?: number;                              // 1-indexed
+  endPage?: number;                                // 1-indexed, exclusive
+}
+
+// ─── Usage (Normalized) ─────────────────────────────────────────────────
 
 interface Usage {
-  prompt_tokens: number;
-  completion_tokens: number;
-  total_tokens: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  details?: UsageDetails;
 }
+
+interface UsageDetails {
+  // Reasoning tokens (OpenAI o-series, DeepSeek, Gemini thoughtsTokenCount)
+  reasoningTokens?: number;
+
+  // Cached/read tokens (OpenAI cached_tokens, Anthropic cache_read, DeepSeek cache_hit)
+  cachedTokens?: number;
+
+  // Cache write tokens (Anthropic cache_creation_input_tokens)
+  cacheWriteTokens?: number;
+
+  // Audio tokens (OpenAI prompt + completion audio_tokens)
+  audioPromptTokens?: number;
+  audioCompletionTokens?: number;
+
+  // Per-modality breakdown (Gemini)
+  promptTokensByModality?: Record<string, number>;      // e.g. { TEXT: 100, IMAGE: 200 }
+  completionTokensByModality?: Record<string, number>;
+}
+
+// ─── Convenience Accessors (on Choice) ──────────────────────────────────
+//
+// These are getter methods/computed properties for ergonomic access:
+//
+//   choice.text         → concatenated text from all TextParts
+//   choice.toolCalls    → array of ToolCallParts
+//   choice.thinking     → concatenated thinking from all ThinkingParts
+//   choice.images       → array of ImageParts
+//   choice.audio        → first AudioPart or undefined
 ```
 
-### 1.5 Streaming
+### 1.5 Unified Streaming (Normalized)
+
+Streaming events follow a **content-part lifecycle** model inspired by Anthropic's SSE design
+(the most granular of all providers). Every provider's stream events are normalized into this
+single event taxonomy.
 
 ```typescript
-// Discriminated union for stream events
+// ─── Stream Events (Discriminated Union) ────────────────────────────────
+
 type ChatStreamEvent =
-  | { type: "delta"; index: number; delta: StreamDelta; finish_reason: string | null }
-  | { type: "usage"; usage: Usage }
-  | { type: "done" }
-  | { type: "error"; error: LLMError };
+  // Content part lifecycle
+  | ContentStartEvent
+  | ContentDeltaEvent
+  | ContentDoneEvent
 
-interface StreamDelta {
-  role?: "assistant";
-  content?: string;
-  tool_calls?: DeltaToolCall[];
+  // Message lifecycle
+  | MessageStartEvent
+  | MessageDeltaEvent
+  | MessageDoneEvent
+
+  // Meta
+  | UsageEvent
+  | ErrorEvent;
+
+interface MessageStartEvent {
+  type: "message.start";
+  id: string;
+  model: string;
 }
 
-interface DeltaToolCall {
-  index: number;
-  id?: string;
-  type?: "function";
-  function?: { name?: string; arguments?: string };
+interface ContentStartEvent {
+  type: "content.start";
+  choiceIndex: number;
+  partIndex: number;
+  part: ResponsePartStart;                         // Metadata about what kind of part is starting
 }
+
+interface ContentDeltaEvent {
+  type: "content.delta";
+  choiceIndex: number;
+  partIndex: number;
+  delta: ResponsePartDelta;                        // Incremental data for the current part
+}
+
+interface ContentDoneEvent {
+  type: "content.done";
+  choiceIndex: number;
+  partIndex: number;
+  part: ResponsePart;                              // The fully assembled part
+}
+
+interface MessageDeltaEvent {
+  type: "message.delta";
+  choiceIndex: number;
+  finishReason: FinishReason;
+}
+
+interface MessageDoneEvent {
+  type: "message.done";
+  response: ChatResponse;                          // The fully assembled response
+}
+
+interface UsageEvent {
+  type: "usage";
+  usage: Usage;
+}
+
+interface ErrorEvent {
+  type: "error";
+  error: LLMError;
+}
+
+// ─── Part Start (what kind of content is beginning) ─────────────────────
+
+type ResponsePartStart =
+  | { type: "text" }
+  | { type: "tool_call"; id: string; name: string }
+  | { type: "thinking" }
+  | { type: "image"; mimeType: string }
+  | { type: "audio"; mimeType: string }
+  | { type: "code_execution"; language: string }
+  | { type: "server_tool_call"; id: string; name: string };
+
+// ─── Part Delta (incremental content) ───────────────────────────────────
+
+type ResponsePartDelta =
+  | { type: "text"; text: string }
+  | { type: "tool_call.arguments"; arguments: string }
+  | { type: "thinking"; thinking: string }
+  | { type: "thinking.signature"; signature: string }
+  | { type: "image"; data: string }                // Base64 chunk
+  | { type: "audio"; data: string }                // Base64 chunk
+  | { type: "audio.transcript"; transcript: string }
+  | { type: "citation"; citation: Citation };
 ```
 
 ### 1.6 Embeddings
@@ -553,37 +799,15 @@ RULES:
    - NOT /chat/completions
 ```
 
-### 4.2 Response Transform: Anthropic → OpenAI
+### 4.2 Response Transform: Anthropic → Unified
 
-```
-INPUT: Anthropic response { id, type, role, content[], model, stop_reason, usage }
-OUTPUT: ChatResponse (OpenAI format)
+See **Section 11.3** for the complete normalization rules. Key points:
 
-RULES:
-1. WRAP in choices array (Anthropic returns single response, OpenAI uses choices[])
-   { choices: [{ index: 0, message: {...}, finish_reason: "..." }] }
-
-2. CONTENT BLOCKS → message
-   - Collect text blocks: join all { type: "text" }.text with ""
-   - Collect tool_use blocks → tool_calls[]:
-     { id: block.id, type: "function", function: { name: block.name, arguments: JSON.stringify(block.input) } }
-   - message.content = joined text (or null if only tool_use)
-   - message.tool_calls = tool calls array (or omit if empty)
-
-3. STOP_REASON → finish_reason
-   - "end_turn" → "stop"
-   - "stop_sequence" → "stop"
-   - "max_tokens" → "length"
-   - "tool_use" → "tool_calls"
-
-4. USAGE
-   - input_tokens → prompt_tokens
-   - output_tokens → completion_tokens
-   - total_tokens = input_tokens + output_tokens
-
-5. ID
-   - Pass through (msg_xxx format is fine)
-```
+- Content blocks map 1:1 to ResponsePart union types
+- All 7 Anthropic block types handled: text, tool_use, thinking, redacted_thinking, server_tool_use, web_search_tool_result
+- Citations (4 types) normalized to unified Citation union
+- Stop reasons (7 values including pause_turn, refusal) mapped to 4 FinishReason values
+- Usage includes cache_creation and cache_read details
 
 ### 4.3 Stream Transform: Anthropic SSE → OpenAI-format events
 
@@ -708,37 +932,15 @@ RULES:
     - logit_bias, user, parallel_tool_calls, stream_options
 ```
 
-### 5.2 Response Transform: Gemini → OpenAI
+### 5.2 Response Transform: Gemini → Unified
 
-```
-INPUT: Gemini GenerateContentResponse
-OUTPUT: ChatResponse (OpenAI format)
+See **Section 11.5** for the complete normalization rules. Key points:
 
-RULES:
-1. candidates → choices
-   For each candidate:
-   - content.parts → extract text and functionCall parts
-   - Join all { text } parts → message.content
-   - Map { functionCall: { name, args } } →
-     tool_calls: [{ id: generateId(), type: "function", function: { name, arguments: JSON.stringify(args) } }]
-     Note: Gemini has NO tool call IDs — generate synthetic ones (e.g. "call_" + randomId())
-
-2. finishReason → finish_reason
-   - "STOP" → "stop"
-   - "MAX_TOKENS" → "length"
-   - "SAFETY" → "content_filter"
-   - "RECITATION" → "content_filter"
-   - Any function call present → "tool_calls"
-   - "OTHER" / "LANGUAGE" → "stop" (best approximation)
-
-3. usageMetadata → usage
-   - promptTokenCount → prompt_tokens
-   - candidatesTokenCount → completion_tokens
-   - totalTokenCount → total_tokens
-
-4. ID
-   - Use responseId if present, otherwise generate one
-```
+- All 7 Gemini part types handled: text, functionCall, inlineData (image/audio), executableCode, codeExecutionResult, thought parts
+- Gemini now has tool call IDs (functionCall.id) — use them when present, generate when absent
+- Grounding metadata mapped to UrlCitation array with segment offsets + confidence scores
+- 11 finish reasons mapped (including SAFETY, RECITATION, BLOCKLIST, SPII, MALFORMED_FUNCTION_CALL)
+- Usage includes thoughtsTokenCount and per-modality breakdowns (TEXT, IMAGE, AUDIO, VIDEO)
 
 ### 5.3 Stream Transform: Gemini SSE → OpenAI-format events
 
@@ -1105,29 +1307,48 @@ const ai = new AgentLoop({
   middleware: [retry(), logger()],
 });
 
-// Chat (any provider)
+// ── Basic chat (any provider — same response format) ──────────────────
+
 const res = await ai.chat({
   model: "openai/gpt-4o",
   messages: [{ role: "user", content: "Hello" }],
 });
+// Convenience accessor — works identically for all 11 providers:
+console.log(res.choices[0].text);       // "Hello! How can I help?"
+// Or iterate content parts for full control:
+for (const part of res.choices[0].content) {
+  if (part.type === "text") console.log(part.text);
+}
 
-// Stream
+// ── Streaming (content-part lifecycle events) ─────────────────────────
+
 for await (const event of ai.stream({
   model: "anthropic/claude-sonnet-4-20250514",
   messages: [{ role: "user", content: "Write a poem" }],
 })) {
-  if (event.type === "delta" && event.delta.content) {
-    process.stdout.write(event.delta.content);
+  switch (event.type) {
+    case "content.delta":
+      if (event.delta.type === "text") process.stdout.write(event.delta.text);
+      if (event.delta.type === "thinking") process.stderr.write(event.delta.thinking);
+      break;
+    case "message.done":
+      console.log("\nUsage:", event.response.usage);
+      break;
   }
 }
 
-// Structured output
-const { data } = await ai.chatStructured(
-  { model: "openai/gpt-4o", messages: [{ role: "user", content: "List 3 colors" }] },
-  z.object({ colors: z.array(z.string()) })
-);
+// ── Reasoning/thinking (normalized from ALL providers) ────────────────
 
-// Tool calling
+const reasoning = await ai.chat({
+  model: "deepseek/deepseek-reasoner",   // or anthropic/claude-sonnet-4-20250514, google/gemini-2.5-flash
+  messages: [{ role: "user", content: "Solve: x^2 + 5x + 6 = 0" }],
+});
+// Same API regardless of provider:
+console.log(reasoning.choices[0].thinking);   // "Let me factor... (x+2)(x+3)=0..."
+console.log(reasoning.choices[0].text);       // "x = -2 or x = -3"
+
+// ── Tool calling ──────────────────────────────────────────────────────
+
 const res2 = await ai.chat({
   model: "groq/llama-3.3-70b-versatile",
   messages: [{ role: "user", content: "Weather in NYC?" }],
@@ -1140,17 +1361,58 @@ const res2 = await ai.chat({
     },
   }],
 });
+// Convenience accessor:
+for (const tc of res2.choices[0].toolCalls) {
+  console.log(tc.name, JSON.parse(tc.arguments));
+}
 
-// Embeddings
+// ── Citations (normalized from 5 different provider formats) ──────────
+
+const cited = await ai.chat({
+  model: "perplexity/sonar-pro",          // or anthropic/, google/ with grounding
+  messages: [{ role: "user", content: "When was Claude Shannon born?" }],
+});
+for (const part of cited.choices[0].content) {
+  if (part.type === "text" && part.citations) {
+    for (const c of part.citations) {
+      if (c.type === "url") console.log(`Source: ${c.title} — ${c.url}`);
+    }
+  }
+}
+
+// ── Multimodal output (Gemini image/audio/code) ───────────────────────
+
+const creative = await ai.chat({
+  model: "google/gemini-2.5-flash",
+  messages: [{ role: "user", content: "Generate an image of a sunset and explain it" }],
+});
+for (const part of creative.choices[0].content) {
+  if (part.type === "image") fs.writeFileSync("sunset.png", Buffer.from(part.data, "base64"));
+  if (part.type === "text") console.log(part.text);
+  if (part.type === "code_execution") console.log("Code:", part.code);
+  if (part.type === "code_result") console.log("Output:", part.output);
+}
+
+// ── Structured output ─────────────────────────────────────────────────
+
+const { data } = await ai.chatStructured(
+  { model: "openai/gpt-4o", messages: [{ role: "user", content: "List 3 colors" }] },
+  z.object({ colors: z.array(z.string()) })
+);
+
+// ── Embeddings ────────────────────────────────────────────────────────
+
 const emb = await ai.embed({
   model: "openai/text-embedding-3-small",
   input: ["hello world", "goodbye world"],
 });
 
-// Fallback: try providers in order
+// ── Fallback: try providers in order ──────────────────────────────────
+
 ai.use(fallback(["openai/gpt-4o", "anthropic/claude-sonnet-4-20250514", "groq/llama-3.3-70b"]));
 
-// Custom provider (any OpenAI-compatible endpoint)
+// ── Custom provider (any OpenAI-compatible endpoint) ──────────────────
+
 const ai2 = new AgentLoop({
   providers: {
     custom: { apiKey: "...", baseURL: "https://my-vllm-server.com/v1" },
@@ -1194,3 +1456,589 @@ const ai2 = new AgentLoop({
 ```
 
 **Key: zero runtime dependencies.** Uses native `fetch()` (Node 18+). Zod is optional peer dep only needed for `chatStructured()`.
+
+---
+
+## 11. Response Normalization Rules
+
+This section specifies **exactly** how each provider's raw response is transformed into
+the unified `ChatResponse` format. The user of AgentLoop never sees provider-specific shapes.
+
+### 11.1 OpenAI Response Normalization
+
+```
+INPUT:  OpenAI chat.completion (raw JSON)
+OUTPUT: ChatResponse (unified)
+
+RULES:
+
+1. TOP-LEVEL
+   - id: pass through
+   - model: pass through
+   - provider: "openai"
+   - providerMetadata: { systemFingerprint, serviceTier } if present
+
+2. CHOICES → choices[]
+   For each raw choice:
+     parts = []
+
+     A. THINKING (reasoning_content — if present, e.g. o-series via compat providers)
+        If message.reasoning_content OR message.reasoning:
+          parts.push({ type: "thinking", thinking: content })
+
+     B. TEXT
+        If message.content is non-null string:
+          textPart = { type: "text", text: message.content }
+          If message.annotations:
+            textPart.citations = message.annotations
+              .filter(a => a.type === "url_citation")
+              .map(a => ({
+                type: "url",
+                url: a.url_citation.url,
+                title: a.url_citation.title,
+                startIndex: a.url_citation.start_index,
+                endIndex: a.url_citation.end_index,
+              }))
+          parts.push(textPart)
+
+     C. TOOL CALLS
+        If message.tool_calls:
+          For each tc:
+            parts.push({
+              type: "tool_call",
+              id: tc.id,
+              name: tc.function.name,
+              arguments: ensureString(tc.function.arguments)  // Fireworks may return object
+            })
+
+     D. AUDIO OUTPUT
+        If message.audio:
+          parts.push({
+            type: "audio",
+            mimeType: "audio/" + requestedFormat,  // from request.audio.format
+            data: message.audio.data,
+            transcript: message.audio.transcript,
+            expiresAt: message.audio.expires_at,
+          })
+
+     E. REFUSAL
+        If message.refusal is non-null:
+          parts.push({ type: "text", text: message.refusal })
+          finishReason = "content_filter"
+
+     finishReason = normalizeFinishReason(choice.finish_reason)
+     index = choice.index
+
+3. FINISH REASON NORMALIZATION
+   "stop"            → "stop"
+   "length"          → "length"
+   "tool_calls"      → "tool_calls"
+   "content_filter"  → "content_filter"
+   "function_call"   → "tool_calls"    (legacy)
+
+4. USAGE
+   promptTokens:     usage.prompt_tokens
+   completionTokens: usage.completion_tokens
+   totalTokens:      usage.total_tokens
+   details: {
+     reasoningTokens:           usage.completion_tokens_details?.reasoning_tokens,
+     cachedTokens:              usage.prompt_tokens_details?.cached_tokens,
+     audioPromptTokens:         usage.prompt_tokens_details?.audio_tokens,
+     audioCompletionTokens:     usage.completion_tokens_details?.audio_tokens,
+   }
+```
+
+### 11.2 OpenAI-Compatible Provider Normalization Quirks
+
+All OpenAI-compat providers use the same normalizer as OpenAI (section 11.1),
+with these **per-provider patches** applied BEFORE the standard normalization:
+
+```
+GROQ:
+  - Streaming: extract usage from x_groq.usage in final chunk (not top-level)
+  - Reasoning: message.reasoning (not reasoning_content) → ThinkingPart
+  - Strip: x_groq, usage_breakdown from providerMetadata
+
+TOGETHER AI:
+  - finish_reason "eos" → "stop" (critical — Together returns "eos" for EOS token)
+  - Reasoning: message.reasoning (not reasoning_content) → ThinkingPart
+  - Inline <think> tags: for DeepSeek R1 models on Together, reasoning is EMBEDDED
+    in message.content as "<think>...</think>". Must parse:
+      const thinkMatch = content.match(/^<think>([\s\S]*?)<\/think>\s*([\s\S]*)$/);
+      if (thinkMatch) {
+        parts.unshift({ type: "thinking", thinking: thinkMatch[1] });
+        textContent = thinkMatch[2];
+      }
+  - Strip: choices[].seed, warnings from providerMetadata
+
+MISTRAL:
+  - choices[].index: MAY be a string ("0") — coerce to number: Number(choice.index)
+  - Reasoning: message.reasoning_content → ThinkingPart
+  - Strip: usage.prompt_audio_seconds from providerMetadata
+
+DEEPSEEK:
+  - Reasoning: message.reasoning_content → ThinkingPart
+  - finish_reason "insufficient_system_resource" → "error"
+  - Usage: prompt_cache_hit_tokens → details.cachedTokens
+  - Usage: completion_tokens_details.reasoning_tokens → details.reasoningTokens
+  - Important: reasoning_content must NOT be passed back in multi-turn messages
+
+FIREWORKS:
+  - Reasoning: message.reasoning_content → ThinkingPart
+  - Inline <think> tags: same parsing as Together (for DeepSeek R1 models)
+  - function.arguments: MAY be a pre-parsed object — coerce:
+      typeof args === "object" ? JSON.stringify(args) : args
+  - Strip: perf_metrics, raw_output, token_ids, prompt_token_ids
+  - Usage: prompt_tokens_details.cached_tokens → details.cachedTokens
+
+PERPLEXITY:
+  - NO tool calls (tools stripped in request, tool_calls never in response)
+  - Extra top-level fields → extract into text citations:
+      if raw.citations:
+        Map each URL to UrlCitation: { type: "url", url: raw.citations[i] }
+        Attach to TextPart.citations
+      if raw.search_results:
+        Map to UrlCitations with title, url, citedText: snippet
+        Store in providerMetadata.searchResults
+      if raw.images:
+        Store in providerMetadata.images
+      if raw.related_questions:
+        Store in providerMetadata.relatedQuestions
+  - Usage: citation_tokens, reasoning_tokens, num_search_queries → providerMetadata
+
+OLLAMA:
+  - system_fingerprint is always "fp_ollama" — do not propagate
+  - No additional normalization needed
+
+COHERE (compatibility):
+  - Standard OpenAI format via compat endpoint
+  - Native API citations NOT available through compat endpoint
+  - No additional normalization needed
+```
+
+### 11.3 Anthropic Response Normalization
+
+```
+INPUT:  Anthropic Message response { id, type, role, content[], model, stop_reason, usage }
+OUTPUT: ChatResponse (unified)
+
+RULES:
+
+1. TOP-LEVEL
+   - id: pass through (msg_xxx format)
+   - model: pass through
+   - provider: "anthropic"
+   - Wrap in single choice (Anthropic always returns 1 response)
+
+2. CONTENT BLOCKS → ResponsePart[]
+   For each block in response.content:
+
+     "text" →
+       part = { type: "text", text: block.text }
+       if block.citations:
+         part.citations = block.citations.map(mapAnthropicCitation)
+       → push to parts
+
+     "tool_use" →
+       { type: "tool_call", id: block.id, name: block.name,
+         arguments: JSON.stringify(block.input) }
+
+     "thinking" →
+       { type: "thinking", thinking: block.thinking, signature: block.signature }
+
+     "redacted_thinking" →
+       { type: "redacted_thinking", data: block.data }
+
+     "server_tool_use" →
+       { type: "server_tool_call", id: block.id, name: block.name,
+         arguments: block.input }
+
+     "web_search_tool_result" →
+       { type: "server_tool_result", toolCallId: block.tool_use_id,
+         content: block.content }
+
+3. CITATION MAPPING (mapAnthropicCitation)
+   "char_location" → {
+     type: "document", documentIndex: c.document_index, documentTitle: c.document_title,
+     citedText: c.cited_text, startCharIndex: c.start_char_index, endCharIndex: c.end_char_index
+   }
+   "page_location" → {
+     type: "page", documentIndex: c.document_index, documentTitle: c.document_title,
+     citedText: c.cited_text, startPage: c.start_page_number, endPage: c.end_page_number
+   }
+   "content_block_location" → {
+     type: "document", documentIndex: c.document_index, documentTitle: c.document_title,
+     citedText: c.cited_text, startCharIndex: c.start_block_index, endCharIndex: c.end_block_index
+   }
+   "web_search_result_location" → {
+     type: "url", url: c.url, title: c.title, citedText: c.cited_text
+   }
+
+4. STOP REASON → finishReason
+   "end_turn"                      → "stop"
+   "stop_sequence"                 → "stop"
+   "max_tokens"                    → "length"
+   "tool_use"                      → "tool_calls"
+   "pause_turn"                    → "stop"     (server tool iteration limit)
+   "refusal"                       → "content_filter"
+   "model_context_window_exceeded" → "length"
+
+5. USAGE
+   promptTokens:     usage.input_tokens
+   completionTokens: usage.output_tokens
+   totalTokens:      usage.input_tokens + usage.output_tokens
+   details: {
+     cachedTokens:    usage.cache_read_input_tokens,
+     cacheWriteTokens: usage.cache_creation_input_tokens,
+   }
+```
+
+### 11.4 Anthropic Stream Normalization
+
+```
+INPUT:  Anthropic SSE events (named event types)
+OUTPUT: ChatStreamEvent (unified)
+
+STATE: Maintain a partIndex counter, an accumulator per content block
+
+EVENT MAPPING:
+
+  message_start →
+    { type: "message.start", id: msg.id, model: msg.model }
+    Store usage.input_tokens for later
+
+  content_block_start →
+    Map block type to ResponsePartStart:
+      "text"                → { type: "text" }
+      "tool_use"            → { type: "tool_call", id: block.id, name: block.name }
+      "thinking"            → { type: "thinking" }
+      "server_tool_use"     → { type: "server_tool_call", id: block.id, name: block.name }
+      "web_search_tool_result" → no content.start (emit full part on content_block_stop)
+    Emit: { type: "content.start", choiceIndex: 0, partIndex: index, part: mapped }
+
+  content_block_delta →
+    Map delta type to ResponsePartDelta:
+      "text_delta"          → { type: "text", text: delta.text }
+      "input_json_delta"    → { type: "tool_call.arguments", arguments: delta.partial_json }
+      "thinking_delta"      → { type: "thinking", thinking: delta.thinking }
+      "signature_delta"     → { type: "thinking.signature", signature: delta.signature }
+      "citations_delta"     → { type: "citation", citation: mapAnthropicCitation(delta.citation) }
+    Emit: { type: "content.delta", choiceIndex: 0, partIndex: index, delta: mapped }
+
+  content_block_stop →
+    Emit: { type: "content.done", choiceIndex: 0, partIndex: index, part: assembledPart }
+
+  message_delta →
+    finishReason = mapStopReason(delta.stop_reason)
+    Accumulate output_tokens from delta.usage
+    Emit: { type: "message.delta", choiceIndex: 0, finishReason }
+
+  message_stop →
+    Emit: { type: "usage", usage: assembled }
+    Emit: { type: "message.done", response: assembledResponse }
+
+  ping → ignore
+
+  error →
+    Emit: { type: "error", error: classifyError("anthropic", ...) }
+```
+
+### 11.5 Google Gemini Response Normalization
+
+```
+INPUT:  Gemini GenerateContentResponse
+OUTPUT: ChatResponse (unified)
+
+RULES:
+
+1. TOP-LEVEL
+   - id: responseId (or generate if absent)
+   - model: modelVersion
+   - provider: "google"
+   - providerMetadata: { safetyRatings, groundingMetadata (raw), promptFeedback } if present
+
+2. CANDIDATES → choices[]
+   For each candidate:
+     parts = []
+
+     For each part in candidate.content.parts:
+
+       A. THINKING (thought: true)
+          If part.text AND part.thought === true:
+            { type: "thinking", thinking: part.text,
+              signature: part.thoughtSignature }  // if present
+
+       B. TEXT
+          If part.text AND (part.thought !== true):
+            textPart = { type: "text", text: part.text }
+            If candidate.groundingMetadata?.groundingSupports:
+              textPart.citations = mapGeminiGrounding(candidate.groundingMetadata)
+            parts.push(textPart)
+
+       C. FUNCTION CALL
+          If part.functionCall:
+            { type: "tool_call",
+              id: part.functionCall.id ?? generateCallId(),
+              name: part.functionCall.name,
+              arguments: JSON.stringify(part.functionCall.args) }
+
+       D. IMAGE OUTPUT
+          If part.inlineData AND mimeType starts with "image/":
+            { type: "image", mimeType: part.inlineData.mimeType,
+              data: part.inlineData.data }
+
+       E. AUDIO OUTPUT
+          If part.inlineData AND mimeType starts with "audio/":
+            { type: "audio", mimeType: part.inlineData.mimeType,
+              data: part.inlineData.data }
+
+       F. CODE EXECUTION
+          If part.executableCode:
+            { type: "code_execution",
+              language: part.executableCode.language.toLowerCase(),
+              code: part.executableCode.code }
+
+       G. CODE RESULT
+          If part.codeExecutionResult:
+            { type: "code_result",
+              outcome: mapOutcome(part.codeExecutionResult.outcome),
+              output: part.codeExecutionResult.output }
+            Where mapOutcome:
+              "OUTCOME_OK"                → "ok"
+              "OUTCOME_FAILED"            → "error"
+              "OUTCOME_DEADLINE_EXCEEDED" → "timeout"
+
+     finishReason = mapGeminiFinishReason(candidate.finishReason)
+     index = candidate.index ?? 0
+
+3. GROUNDING CITATION MAPPING (mapGeminiGrounding)
+   For each support in groundingMetadata.groundingSupports:
+     For each chunkIndex in support.groundingChunkIndices:
+       chunk = groundingMetadata.groundingChunks[chunkIndex]
+       {
+         type: "url",
+         url: chunk.web?.uri ?? chunk.retrievedContext?.uri,
+         title: chunk.web?.title ?? chunk.retrievedContext?.title,
+         citedText: support.segment.text,
+         startIndex: support.segment.startIndex,
+         endIndex: support.segment.endIndex,
+       }
+
+4. FINISH REASON
+   "STOP"                    → "stop"
+   "MAX_TOKENS"              → "length"
+   "SAFETY"                  → "content_filter"
+   "RECITATION"              → "content_filter"
+   "LANGUAGE"                → "content_filter"
+   "BLOCKLIST"               → "content_filter"
+   "PROHIBITED_CONTENT"      → "content_filter"
+   "SPII"                    → "content_filter"
+   "MALFORMED_FUNCTION_CALL" → "error"
+   "OTHER"                   → "stop"
+   Any functionCall present  → "tool_calls" (override)
+
+5. USAGE
+   promptTokens:     usageMetadata.promptTokenCount
+   completionTokens: usageMetadata.candidatesTokenCount
+   totalTokens:      usageMetadata.totalTokenCount
+   details: {
+     reasoningTokens: usageMetadata.thoughtsTokenCount,
+     cachedTokens:    usageMetadata.cachedContentTokenCount,
+     promptTokensByModality: fromModalityArray(usageMetadata.promptTokensDetails),
+     completionTokensByModality: fromModalityArray(usageMetadata.candidatesTokensDetails),
+   }
+```
+
+### 11.6 Gemini Stream Normalization
+
+```
+INPUT:  Gemini SSE data lines (each is a full GenerateContentResponse)
+OUTPUT: ChatStreamEvent (unified)
+
+STATE: Track partIndex per candidate, previous text to compute deltas
+
+RULES:
+  Gemini streams FULL responses (not deltas). Each chunk contains the text
+  fragment for that chunk, NOT the cumulative text. We convert to content
+  lifecycle events:
+
+  First chunk →
+    { type: "message.start", id: responseId, model: modelVersion }
+
+  Each chunk, for each candidate:
+    For each part in content.parts:
+
+      If this is a NEW part type (text after thinking, or functionCall):
+        Emit content.done for previous part
+        Emit content.start for new part
+
+      Map part to content.delta:
+        text (thought: true) → { type: "thinking", thinking: part.text }
+        text               → { type: "text", text: part.text }
+        functionCall       → emit as content.start + content.done (not incremental)
+        inlineData         → { type: "image" or "audio", data: part.inlineData.data }
+        executableCode     → emit as content.start + content.done
+        codeExecutionResult → emit as content.start + content.done
+
+    If finishReason present:
+      Emit content.done for last part
+      { type: "message.delta", choiceIndex, finishReason: mapped }
+
+    If usageMetadata present (final chunk):
+      { type: "usage", usage: normalized }
+
+  On stream close:
+    Emit: { type: "message.done", response: assembledResponse }
+```
+
+### 11.7 OpenAI-Compatible Stream Normalization
+
+```
+INPUT:  SSE data lines from any OpenAI-compatible provider
+OUTPUT: ChatStreamEvent (unified)
+
+STATE: Track active partIndex, tool call accumulator, text accumulator per choice
+
+RULES:
+  First chunk (has delta.role) →
+    { type: "message.start", id: chunk.id, model: chunk.model }
+
+  Content delta (delta.content is non-null) →
+    If first text delta (no text part started yet):
+      { type: "content.start", choiceIndex, partIndex, part: { type: "text" } }
+    { type: "content.delta", choiceIndex, partIndex,
+      delta: { type: "text", text: delta.content } }
+
+  Reasoning delta (delta.reasoning OR delta.reasoning_content) →
+    If first reasoning delta:
+      { type: "content.start", choiceIndex, partIndex, part: { type: "thinking" } }
+    { type: "content.delta", choiceIndex, partIndex,
+      delta: { type: "thinking", thinking: reasoningText } }
+
+  Tool call delta (delta.tool_calls[]) →
+    For each tc in delta.tool_calls:
+      If tc.id present (first chunk for this tool call):
+        If reasoning was active: emit content.done for thinking part
+        If text was active: emit content.done for text part
+        { type: "content.start", choiceIndex, partIndex,
+          part: { type: "tool_call", id: tc.id, name: tc.function.name } }
+      If tc.function.arguments:
+        { type: "content.delta", choiceIndex, partIndex,
+          delta: { type: "tool_call.arguments", arguments: tc.function.arguments } }
+
+  Audio delta (delta.audio) →
+    If delta.audio.data:
+      { type: "content.delta", choiceIndex, partIndex,
+        delta: { type: "audio", data: delta.audio.data } }
+    If delta.audio.transcript:
+      { type: "content.delta", choiceIndex, partIndex,
+        delta: { type: "audio.transcript", transcript: delta.audio.transcript } }
+
+  Finish (choice.finish_reason is non-null) →
+    Emit content.done for active part
+    { type: "message.delta", choiceIndex,
+      finishReason: normalizeFinishReason(choice.finish_reason) }
+
+  Usage chunk (chunk.usage is non-null, choices is empty []) →
+    { type: "usage", usage: normalizeUsage(chunk.usage, providerName) }
+
+  [DONE] sentinel →
+    Emit: { type: "message.done", response: assembledResponse }
+
+  Groq streaming quirk:
+    In final chunk, extract usage from chunk.x_groq.usage instead of chunk.usage
+```
+
+---
+
+## 12. Multimodal Capability Matrix
+
+This table summarizes which OUTPUT modalities each provider supports in chat responses.
+AgentLoop normalizes all of these into the unified `ResponsePart` union.
+
+### Output Capabilities
+
+| Output Type | OpenAI | Anthropic | Gemini | Groq | Together | Mistral | DeepSeek | Fireworks | Perplexity | Ollama | Cohere |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Text | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
+| Tool calls | Y | Y | Y | Y | Y | Y | Y | Y | N | Y* | Y |
+| Thinking/Reasoning | count only | Y (blocks) | Y (parts) | Y (field) | Y (field) | Y (field) | Y (field) | Y (field) | N | N | N |
+| Image output | N** | N | Y | N | N | N | N | N | N | N | N |
+| Audio output | Y | N | Y | N | N | N | N | N | N | N | N |
+| Code execution | N** | N | Y | N | N | N | N | N | N | N | N |
+| Citations | Y (annot) | Y (blocks) | Y (ground) | partial | N | N | N | N | Y (array) | N | Y*** |
+| Server tools | N | Y | N | N | N | N | N | N | N | N | N |
+| Search results | N | Y (web) | Y (ground) | N | N | N | N | N | Y | N | N |
+
+*Ollama: tool calling without tool_choice
+**OpenAI: image gen and code execution only in Responses API, not Chat Completions
+***Cohere: citations only via native API, not compatibility endpoint
+
+### Reasoning Field Names by Provider
+
+| Provider | Non-streaming field | Streaming field | Format |
+|---|---|---|---|
+| OpenAI (o-series) | `reasoning_details` | `delta.reasoning_details` | Summary text |
+| Anthropic | `content[].type: "thinking"` | `thinking_delta` | Block with signature |
+| Gemini | `parts[].thought: true` | Same, per chunk | Part with thoughtSignature |
+| DeepSeek | `message.reasoning_content` | `delta.reasoning_content` | Plain string |
+| Mistral | `message.reasoning_content` | `delta.reasoning_content` | Plain string |
+| Fireworks | `message.reasoning_content` | `delta.reasoning_content` | Plain string, or `<think>` tags |
+| Groq | `message.reasoning` | `delta.reasoning` | Plain string |
+| Together | `message.reasoning` | `delta.reasoning` | Plain string, or `<think>` tags |
+
+All of these are normalized to `ThinkingPart { type: "thinking"; thinking: string }`.
+
+### Citation Formats by Provider
+
+| Provider | Location | Format | Normalized To |
+|---|---|---|---|
+| OpenAI | `message.annotations[].url_citation` | URL + title + offsets | `UrlCitation` |
+| Anthropic | `content[].citations[]` | 4 types (char, page, block, web) | `UrlCitation`, `DocumentCitation`, `PageCitation` |
+| Gemini | `candidate.groundingMetadata.groundingSupports[]` | Segment + chunk indices + confidence | `UrlCitation` |
+| Perplexity | Top-level `citations[]` array | Array of URL strings + `[1]` refs in text | `UrlCitation` |
+| Cohere (native) | `message.citations[]` | Start/end + sources[] | `UrlCitation` |
+
+### Finish Reason Normalization
+
+| Raw Value | Provider | Normalized To |
+|---|---|---|
+| `"stop"` | OpenAI, most compat | `"stop"` |
+| `"eos"` | Together AI | `"stop"` |
+| `"length"` | OpenAI, most compat | `"length"` |
+| `"tool_calls"` | OpenAI, most compat | `"tool_calls"` |
+| `"function_call"` | OpenAI (legacy) | `"tool_calls"` |
+| `"content_filter"` | OpenAI | `"content_filter"` |
+| `"insufficient_system_resource"` | DeepSeek | `"error"` |
+| `"end_turn"` | Anthropic | `"stop"` |
+| `"stop_sequence"` | Anthropic | `"stop"` |
+| `"max_tokens"` | Anthropic | `"length"` |
+| `"tool_use"` | Anthropic | `"tool_calls"` |
+| `"pause_turn"` | Anthropic | `"stop"` |
+| `"refusal"` | Anthropic | `"content_filter"` |
+| `"model_context_window_exceeded"` | Anthropic | `"length"` |
+| `"STOP"` | Gemini | `"stop"` |
+| `"MAX_TOKENS"` | Gemini | `"length"` |
+| `"SAFETY"` | Gemini | `"content_filter"` |
+| `"RECITATION"` | Gemini | `"content_filter"` |
+| `"LANGUAGE"` | Gemini | `"content_filter"` |
+| `"BLOCKLIST"` | Gemini | `"content_filter"` |
+| `"PROHIBITED_CONTENT"` | Gemini | `"content_filter"` |
+| `"SPII"` | Gemini | `"content_filter"` |
+| `"MALFORMED_FUNCTION_CALL"` | Gemini | `"error"` |
+| `"OTHER"` | Gemini | `"stop"` |
+
+### Usage Normalization
+
+| Provider Field | Normalized To |
+|---|---|
+| `prompt_tokens` / `input_tokens` / `promptTokenCount` | `usage.promptTokens` |
+| `completion_tokens` / `output_tokens` / `candidatesTokenCount` | `usage.completionTokens` |
+| `total_tokens` / `totalTokenCount` | `usage.totalTokens` |
+| `completion_tokens_details.reasoning_tokens` / `thoughtsTokenCount` | `usage.details.reasoningTokens` |
+| `prompt_tokens_details.cached_tokens` / `cache_read_input_tokens` / `prompt_cache_hit_tokens` / `cachedContentTokenCount` | `usage.details.cachedTokens` |
+| `cache_creation_input_tokens` | `usage.details.cacheWriteTokens` |
+| `prompt_tokens_details.audio_tokens` | `usage.details.audioPromptTokens` |
+| `completion_tokens_details.audio_tokens` | `usage.details.audioCompletionTokens` |
+| `promptTokensDetails[].{modality, tokenCount}` | `usage.details.promptTokensByModality` |
+| `candidatesTokensDetails[].{modality, tokenCount}` | `usage.details.completionTokensByModality` |
