@@ -1,500 +1,254 @@
-# AgentLoop — ULTRAPLAN
+# AgentLoop — ULTRAPLAN v2 (Research-Backed)
 
-## The Key Insight
+## Key Insight (Validated by API Research)
 
-**~80% of LLM providers already speak the OpenAI wire format.** Groq, Together, Ollama, Mistral, DeepSeek, Fireworks, Perplexity, vLLM, LMStudio, Azure OpenAI — they all expose `/v1/chat/completions` with identical request/response shapes.
+Every provider was researched against actual API docs. Result:
 
-Writing a separate adapter for each is wasted code. Instead:
-
-> **Use the OpenAI format as the internal lingua franca.**
-> Only write transform code for providers that are genuinely different.
-
----
-
-## Architecture: 3 Tiers
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                     AgentLoop Client                     │
-│            chat() / stream() / embed()                   │
-│         parse "provider/model" → route to tier           │
-├──────────┬──────────────────────────┬────────────────────┤
-│  Tier 1  │        Tier 2           │      Tier 3        │
-│  Native  │   OpenAI-Compatible     │    Transforms      │
-│          │                         │                    │
-│  OpenAI  │  Just a baseURL swap:   │  Real adapters:    │
-│  (zero   │  • Groq                 │  • Anthropic       │
-│   code)  │  • Together             │  • Google Gemini   │
-│          │  • Ollama               │                    │
-│          │  • Mistral              │  ~150 lines each   │
-│          │  • DeepSeek             │  (request map +    │
-│          │  • Fireworks            │   response map +   │
-│          │  • Perplexity           │   stream map)      │
-│          │  • Azure OpenAI         │                    │
-│          │  • vLLM / LMStudio      │                    │
-│          │  • ANY custom endpoint  │                    │
-│          │                         │                    │
-│  0 lines │  0 lines per provider   │  ~300 lines total  │
-│  of code │  (just config entries)  │                    │
-└──────────┴──────────────────────────┴────────────────────┘
-```
-
-**Total provider code: ~300 lines** (Anthropic + Google transforms only).
-Everything else is config.
+- **10 of 10 providers** support OpenAI-compatible `/v1/chat/completions`
+- **Only 2** need real transforms (Anthropic, Google Gemini)
+- **Cohere** now has an OpenAI-compatible endpoint — eliminating the need for a native adapter
+- The OpenAI wire format truly is the universal lingua franca
 
 ---
 
-## Project Structure (12 files)
+## Architecture: Parameter-Filtered Strategy Pattern
+
+The original ultraplan proposed 3 tiers. Research revealed a subtlety: OpenAI-compatible
+providers aren't *identically* compatible — each supports a different subset of parameters.
+This demands a **parameter filter** layer, not just a baseURL swap.
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                          AgentLoop Client                                │
+│                                                                          │
+│   chat("provider/model", ...) ──→ resolve provider                      │
+│                                      │                                   │
+│                           ┌──────────┴──────────┐                       │
+│                           ▼                      ▼                       │
+│                   OpenAI-Compatible         Transform Layer               │
+│                   (direct dispatch)         (Anthropic / Gemini)          │
+│                           │                      │                       │
+│                    ┌──────┴──────┐          ┌────┴─────┐                 │
+│                    ▼             ▼          ▼          ▼                  │
+│              param filter   fetch()    toNative()   fromNative()         │
+│              (strip unsup-             (pure fn)    (pure fn)            │
+│               ported keys)                                               │
+│                    │                       │                              │
+│                    ▼                       ▼                              │
+│              provider endpoint        provider endpoint                  │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+### Design Patterns Used
+
+| Pattern | Where | Why |
+|---|---|---|
+| **Strategy** | Transform functions per provider | Swap request/response mapping without changing client |
+| **Chain of Responsibility** | Middleware pipeline | Composable cross-cutting concerns (retry, cache, fallback) |
+| **Adapter** | Anthropic/Gemini transforms | Convert between incompatible interfaces |
+| **Proxy** | Parameter filter | Transparently strip unsupported params before dispatch |
+| **Registry** | Provider config table | Decouple provider identity from implementation |
+| **Template Method** | Base provider with hooks | Common HTTP/SSE logic, customizable per-provider |
+| **Discriminated Union** | Content parts, stream events | Type-safe exhaustive matching |
+| **Builder** | Config construction | Fluent, validatable provider setup |
+
+---
+
+## Provider Compatibility Matrix (from API research)
+
+### Parameter Support
+
+| Parameter | OpenAI | Groq | Together | Mistral | DeepSeek | Fireworks | Perplexity | Ollama | Cohere (compat) |
+|---|---|---|---|---|---|---|---|---|---|
+| `temperature` | 0-2 | 0-2 | 0-2 | 0-1 | 0-2 | 0-2 | 0-2 | 0-2 | 0-1 |
+| `top_p` | Y | Y | Y | Y | Y | Y | - | Y | Y |
+| `max_tokens` | Y | Y | Y | Y | Y | Y | Y | Y | Y |
+| `stop` | 4 seq | 4 seq | Y | Y | 16 seq | 4 seq | Y | Y | Y |
+| `stream` | Y | Y | Y | Y | Y | Y | Y | Y | Y |
+| `tools` | Y | Y(128) | Y | Y | Y(128) | Y | **N** | Y | Y |
+| `tool_choice` | Y | Y | Y | Y | Y | Y | **N** | **N** | Y |
+| `parallel_tool_calls` | Y | Y | Y | Y | - | Y | **N** | - | **N** |
+| `response_format` | all | all | all | all | json | all | schema | json | Y |
+| `n` | Y | **1 only** | Y(128) | Y | **N** | Y(128) | **N** | **N** | **N** |
+| `frequency_penalty` | Y | **N** | Y | Y | Y | Y | **N** | Y | Y |
+| `presence_penalty` | Y | **N** | Y | Y | Y | Y | **N** | Y | Y |
+| `logprobs` | Y | **N** | Y | - | Y | Y(0-5) | **N** | **N** | **N** |
+| `logit_bias` | Y | **N** | Y | - | **N** | Y | **N** | **N** | **N** |
+| `seed` | Y | Y | Y | `random_seed` | **N** | Y | **N** | Y | Y |
+| `user` | Y | - | - | - | **N** | Y | **N** | **N** | **N** |
+
+### Feature Support
+
+| Feature | OpenAI | Groq | Together | Mistral | DeepSeek | Fireworks | Perplexity | Ollama | Cohere | Anthropic | Google |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Chat | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
+| Streaming | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
+| Tool calling | Y | Y | Y | Y | Y | Y | N | Y* | Y | Y | Y |
+| Vision | Y | Y | Y | Y | N | Y | Y | Y* | Y | Y | Y |
+| JSON mode | Y | Y | Y | Y | Y | Y | schema | Y | Y | N** | Y |
+| Structured output | Y | Y | Y | Y | N | Y | Y | Y | Y | N** | Y |
+| Embeddings | Y | - | - | Y | - | - | N | Y | Y | N | Y |
+
+*Ollama: tool calling without tool_choice; vision base64-only
+**Anthropic: no native JSON mode — achieved via tool_use trick or prompt instruction
+
+### Authentication Methods
+
+| Provider | Method | Header |
+|---|---|---|
+| OpenAI | Bearer | `Authorization: Bearer sk-...` |
+| Groq | Bearer | `Authorization: Bearer gsk_...` |
+| Together | Bearer | `Authorization: Bearer ...` |
+| Mistral | Bearer | `Authorization: Bearer ...` |
+| DeepSeek | Bearer | `Authorization: Bearer sk-...` |
+| Fireworks | Bearer | `Authorization: Bearer fw_...` |
+| Perplexity | Bearer | `Authorization: Bearer pplx-...` |
+| Ollama | None (ignored) | `Authorization: Bearer ollama` (placeholder) |
+| Cohere (compat) | Bearer | `Authorization: Bearer ...` |
+| **Anthropic** | **Custom** | **`x-api-key: sk-ant-...`** + `anthropic-version: 2023-06-01` |
+| **Google** | **Custom** | **`x-goog-api-key: ...`** (or `?key=` query param) |
+
+### Base URLs
+
+| Provider | Base URL |
+|---|---|
+| OpenAI | `https://api.openai.com/v1` |
+| Groq | `https://api.groq.com/openai/v1` |
+| Together | `https://api.together.xyz/v1` |
+| Mistral | `https://api.mistral.ai/v1` |
+| DeepSeek | `https://api.deepseek.com` |
+| Fireworks | `https://api.fireworks.ai/inference/v1` |
+| Perplexity | `https://api.perplexity.ai` |
+| Ollama | `http://localhost:11434/v1` |
+| Cohere | `https://api.cohere.ai/compatibility/v1` |
+| Anthropic | `https://api.anthropic.com/v1` (non-OpenAI) |
+| Google | `https://generativelanguage.googleapis.com/v1beta` (non-OpenAI) |
+
+---
+
+## Architecture: Minimal Code, Maximum Coverage
+
+### Project Structure (14 files, ~900 lines)
 
 ```
 agentloop/
 ├── src/
-│   ├── index.ts              # Public API barrel export
-│   ├── types.ts              # ALL types in one file (~120 lines)
-│   ├── client.ts             # AgentLoop class + model routing (~100 lines)
-│   ├── provider.ts           # OpenAI-compat base provider (~120 lines)
-│   ├── registry.ts           # Provider config table + lazy init (~60 lines)
+│   ├── index.ts                    # Public barrel export (~20 lines)
+│   ├── types.ts                    # All types — discriminated unions (~100 lines)
+│   ├── client.ts                   # AgentLoop class — routing + middleware (~120 lines)
+│   ├── provider.ts                 # OpenAI-compatible provider — fetch + SSE (~150 lines)
+│   ├── registry.ts                 # Provider config table + param filters (~80 lines)
 │   ├── transforms/
-│   │   ├── anthropic.ts      # ChatRequest ↔ Anthropic Messages API (~150 lines)
-│   │   └── google.ts         # ChatRequest ↔ Gemini API (~150 lines)
-│   ├── middleware.ts          # compose() + all built-in middleware (~150 lines)
-│   └── errors.ts             # Unified error mapping (~50 lines)
+│   │   ├── anthropic.ts            # Anthropic ↔ OpenAI transforms (~180 lines)
+│   │   └── google.ts              # Gemini ↔ OpenAI transforms (~180 lines)
+│   ├── middleware.ts               # compose() + retry/fallback/cache/logger (~120 lines)
+│   └── errors.ts                   # Unified error hierarchy (~50 lines)
 ├── tests/
-│   ├── client.test.ts
 │   ├── provider.test.ts
 │   ├── transforms.test.ts
-│   └── middleware.test.ts
+│   ├── middleware.test.ts
+│   └── client.test.ts
 ├── package.json
 ├── tsconfig.json
 └── tsup.config.ts
 ```
 
-**~12 source files. ~800 lines of actual code.**
+### Code Reuse Breakdown
 
-Compare to original plan: ~40+ files, thousands of lines, separate adapter per provider.
+| Component | Lines | Covers |
+|---|---|---|
+| `provider.ts` | ~150 | HTTP dispatch + SSE parsing for ALL 9 OpenAI-compat providers |
+| `registry.ts` | ~80 | Config + param filters for 9 providers (avg ~8 lines each) |
+| `transforms/anthropic.ts` | ~180 | Full Anthropic Messages API mapping |
+| `transforms/google.ts` | ~180 | Full Gemini generateContent mapping |
+| `types.ts` | ~100 | Complete type system |
+| `client.ts` | ~120 | Routing + middleware + structured output |
+| `middleware.ts` | ~120 | 5 middleware functions |
+| `errors.ts` | ~50 | Error normalization |
+| **Total** | **~900** | **11 providers, full feature set** |
 
 ---
 
-## How It Works
+## The Parameter Filter (Key Innovation)
 
-### Step 1: The OpenAI-compatible base does all the heavy lifting
-
-One class handles chat, streaming, embeddings, tool calling for ANY provider
-that speaks the OpenAI format. This is the only "provider" implementation:
+Instead of per-provider adapter code, each provider declares a **param filter config**:
 
 ```typescript
-class OpenAIProvider {
-  constructor(private config: { baseURL: string; apiKey: string }) {}
-
-  async chat(request: ChatRequest): Promise<ChatResponse> {
-    // Direct fetch to baseURL/chat/completions
-    // Request IS already in OpenAI format — no mapping needed
-    // Response IS already in our format — no mapping needed
-  }
-
-  async *stream(request: ChatRequest): AsyncIterable<ChatStreamEvent> {
-    // SSE parsing of OpenAI-format stream
-    // Delta events are already in our format
-  }
-
-  async embed(request: EmbedRequest): Promise<EmbedResponse> {
-    // Direct fetch to baseURL/embeddings
-  }
-}
-```
-
-### Step 2: Adding a new OpenAI-compatible provider = 3 lines of config
-
-```typescript
-// registry.ts — this is ALL the code needed per compatible provider
-const PROVIDERS: Record<string, ProviderEntry> = {
-  openai:     { baseURL: "https://api.openai.com/v1" },
-  groq:       { baseURL: "https://api.groq.com/openai/v1" },
-  together:   { baseURL: "https://api.together.xyz/v1" },
-  mistral:    { baseURL: "https://api.mistral.ai/v1" },
-  deepseek:   { baseURL: "https://api.deepseek.com/v1" },
-  fireworks:  { baseURL: "https://api.fireworks.ai/inference/v1" },
-  perplexity: { baseURL: "https://api.perplexity.ai" },
-  ollama:     { baseURL: "http://localhost:11434/v1", apiKey: "ollama" },
-  // Users can add their own:
-  // custom: { baseURL: "https://my-vllm-server.com/v1" }
+// registry.ts
+const PROVIDERS = {
+  openai: {
+    baseURL: "https://api.openai.com/v1",
+    // All params supported — no filter needed
+  },
+  groq: {
+    baseURL: "https://api.groq.com/openai/v1",
+    strip: ["frequency_penalty", "presence_penalty", "logprobs",
+            "top_logprobs", "logit_bias"],
+    clamp: { n: 1 },
+  },
+  perplexity: {
+    baseURL: "https://api.perplexity.ai",
+    strip: ["tools", "tool_choice", "frequency_penalty", "presence_penalty",
+            "logprobs", "top_logprobs", "logit_bias", "seed", "n", "user"],
+  },
+  ollama: {
+    baseURL: "http://localhost:11434/v1",
+    auth: "none",
+    strip: ["tool_choice", "logprobs", "logit_bias", "n", "user"],
+  },
+  mistral: {
+    baseURL: "https://api.mistral.ai/v1",
+    rename: { seed: "random_seed" },
+    clamp: { temperature: [0, 1] },
+  },
+  // ... etc
 };
 ```
 
-**Zero per-provider adapter code.** 8+ providers from a lookup table.
-
-### Step 3: Only Anthropic and Google need real transforms
-
-These two have genuinely different APIs. Each transform is a pair of pure functions:
-
-```typescript
-// transforms/anthropic.ts
-export function toAnthropicRequest(req: ChatRequest): AnthropicNativeRequest {
-  // Extract system message → top-level system param
-  // Convert content parts → Anthropic content blocks
-  // Map tool definitions → Anthropic tool format
-  // Map tool_choice → Anthropic tool_choice
-}
-
-export function fromAnthropicResponse(res: AnthropicNativeResponse): ChatResponse {
-  // Map content blocks → ChatMessage
-  // Map tool_use blocks → ToolCall[]
-  // Map stop_reason → finish_reason
-  // Extract usage
-}
-
-export function fromAnthropicStream(event: AnthropicStreamEvent): ChatStreamEvent {
-  // Map content_block_delta → content_delta
-  // Map tool_use delta → tool_call_delta
-  // Map message_stop → done
-}
-```
-
-Same pattern for Google. **Pure functions, no classes, no inheritance, fully testable.**
-
-### Step 4: Client routing is trivial
-
-```typescript
-class AgentLoop {
-  chat(request: ChatRequest): Promise<ChatResponse> {
-    const [providerName, model] = parseModel(request.model); // "anthropic/claude-sonnet-4-20250514" → ["anthropic", "claude-sonnet-4-20250514"]
-    const provider = this.resolve(providerName);
-
-    if (provider.transform) {
-      // Tier 3: transform request → call provider API → transform response
-      const nativeReq = provider.transform.toRequest({ ...request, model });
-      const nativeRes = await provider.transport.post(nativeReq);
-      return provider.transform.fromResponse(nativeRes);
-    }
-
-    // Tier 1 & 2: send directly (already OpenAI format)
-    return this.openai.chat({ ...request, model }, provider.baseURL, provider.apiKey);
-  }
-}
-```
+One generic `filterParams()` function (~20 lines) handles strip/rename/clamp for ALL providers.
+Zero per-provider code. Pure config.
 
 ---
 
-## Unified Types (single file)
+## Implementation Phases (unchanged, still 4)
 
-Our types ARE the OpenAI types (with minor extensions). No translation layer needed
-for 80% of providers. This is the entire type surface:
+### Phase 1: Core (~400 lines, 4 files)
+- `types.ts` — complete type system
+- `provider.ts` — OpenAI-compat provider (fetch + SSE streaming)
+- `registry.ts` — all 9 compat providers as config entries
+- `errors.ts` — error mapping
 
-```typescript
-// types.ts — everything in one file
+**Delivers:** Chat + streaming + tools for OpenAI, Groq, Together, Mistral, DeepSeek, Fireworks, Perplexity, Ollama, Cohere.
 
-export type Role = "system" | "user" | "assistant" | "tool";
+### Phase 2: Transforms (~360 lines, 2 files)
+- `transforms/anthropic.ts` — request/response/stream mapping
+- `transforms/google.ts` — request/response/stream mapping
 
-export type ContentPart =
-  | { type: "text"; text: string }
-  | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } };
+**Delivers:** Full 11-provider coverage.
 
-export interface ChatMessage {
-  role: Role;
-  content: string | ContentPart[] | null;
-  tool_calls?: ToolCall[];
-  tool_call_id?: string;
-  name?: string;
-}
+### Phase 3: Client + Middleware (~240 lines, 2 files)
+- `client.ts` — AgentLoop class, routing, structured output
+- `middleware.ts` — retry, fallback, cache, logger, cost tracker
 
-export interface ToolDefinition {
-  type: "function";
-  function: { name: string; description: string; parameters: Record<string, unknown> };
-}
+**Delivers:** Production-ready SDK with middleware.
 
-export interface ToolCall {
-  id: string;
-  type: "function";
-  function: { name: string; arguments: string };
-}
-
-export interface ChatRequest {
-  model: string;
-  messages: ChatMessage[];
-  tools?: ToolDefinition[];
-  tool_choice?: "auto" | "required" | "none" | { type: "function"; function: { name: string } };
-  response_format?: { type: "text" | "json_object" | "json_schema"; json_schema?: { name: string; schema: Record<string, unknown> } };
-  temperature?: number;
-  max_tokens?: number;
-  top_p?: number;
-  stop?: string | string[];
-  stream?: boolean;
-}
-
-export interface ChatResponse {
-  id: string;
-  model: string;
-  provider: string;
-  choices: {
-    index: number;
-    message: ChatMessage;
-    finish_reason: "stop" | "tool_calls" | "length" | "content_filter";
-  }[];
-  usage: Usage;
-}
-
-export interface Usage {
-  prompt_tokens: number;
-  completion_tokens: number;
-  total_tokens: number;
-}
-
-export interface ChatStreamEvent {
-  type: "delta" | "usage" | "done" | "error";
-  delta?: { content?: string; tool_calls?: Partial<ToolCall>[] };
-  usage?: Usage;
-  finish_reason?: string;
-  error?: Error;
-}
-
-export interface EmbedRequest {
-  model: string;
-  input: string | string[];
-  dimensions?: number;
-}
-
-export interface EmbedResponse {
-  embeddings: number[][];
-  model: string;
-  usage: { prompt_tokens: number; total_tokens: number };
-}
-
-export interface ProviderConfig {
-  apiKey?: string;
-  baseURL?: string;
-}
-
-export interface AgentLoopConfig {
-  providers?: Record<string, ProviderConfig>;
-  defaultProvider?: string;
-  defaultModel?: string;
-  middleware?: Middleware[];
-}
-```
-
-That's it. ~80 lines. One file. The OpenAI format IS our format.
+### Phase 4: Polish
+- `index.ts` — barrel export
+- Tests, build config, package.json
 
 ---
 
-## Middleware (single file)
+## Summary: What Changed from v1
 
-All middleware in one file. Each is a small higher-order function:
-
-```typescript
-// middleware.ts
-
-export type Middleware = (ctx: MiddlewareContext, next: () => Promise<ChatResponse>) => Promise<ChatResponse>;
-
-export interface MiddlewareContext {
-  request: ChatRequest;
-  provider: string;
-  model: string;
-  attempt: number;
-}
-
-// compose([m1, m2, m3], handler) → m1(m2(m3(handler)))
-export function compose(middleware: Middleware[], handler: (ctx: MiddlewareContext) => Promise<ChatResponse>) {
-  return middleware.reduceRight(
-    (next, mw) => (ctx) => mw(ctx, () => next(ctx)),
-    handler
-  );
-}
-
-// --- Built-in middleware (each ~15-25 lines) ---
-
-export function retry(opts: { maxRetries?: number; backoff?: number } = {}): Middleware {
-  const { maxRetries = 3, backoff = 1000 } = opts;
-  return async (ctx, next) => {
-    for (let i = 0; i <= maxRetries; i++) {
-      try { return await next(); }
-      catch (e: any) {
-        if (i === maxRetries || !e.retryable) throw e;
-        ctx.attempt = i + 1;
-        await sleep(backoff * 2 ** i + Math.random() * 100);
-      }
-    }
-    throw new Error("unreachable");
-  };
-}
-
-export function fallback(models: string[]): Middleware {
-  return async (ctx, next) => {
-    for (const model of models) {
-      try {
-        ctx.request = { ...ctx.request, model };
-        return await next();
-      } catch (e: any) {
-        if (model === models[models.length - 1]) throw e;
-      }
-    }
-    throw new Error("unreachable");
-  };
-}
-
-export function cache(store: Map<string, ChatResponse> = new Map(), ttl = 300_000): Middleware {
-  return async (ctx, next) => {
-    const key = JSON.stringify(ctx.request);
-    const cached = store.get(key);
-    if (cached) return cached;
-    const res = await next();
-    store.set(key, res);
-    setTimeout(() => store.delete(key), ttl);
-    return res;
-  };
-}
-
-export function logger(log: (msg: string) => void = console.log): Middleware {
-  return async (ctx, next) => {
-    const start = Date.now();
-    log(`→ ${ctx.provider}/${ctx.model}`);
-    const res = await next();
-    log(`← ${ctx.provider}/${ctx.model} ${Date.now() - start}ms ${res.usage.total_tokens}tok`);
-    return res;
-  };
-}
-```
-
-~100 lines total. All middleware in one file. No separate directories.
-
----
-
-## Error Mapping (single file)
-
-```typescript
-// errors.ts
-export class LLMError extends Error {
-  constructor(
-    message: string,
-    public provider: string,
-    public status?: number,
-    public retryable = false,
-    public raw?: unknown
-  ) { super(message); }
-}
-
-export function mapError(provider: string, error: unknown): LLMError {
-  // Normalize HTTP status codes across all providers into typed errors
-  const status = (error as any)?.status;
-  const msg = (error as any)?.message ?? String(error);
-
-  if (status === 401) return new LLMError(msg, provider, 401, false, error);
-  if (status === 429) return new LLMError(msg, provider, 429, true, error);
-  if (status === 500 || status === 502 || status === 503)
-    return new LLMError(msg, provider, status, true, error);
-  return new LLMError(msg, provider, status, false, error);
-}
-```
-
-~25 lines. Done.
-
----
-
-## Structured Output (built into client, not a separate module)
-
-```typescript
-// Inside client.ts — 15 lines, not a separate file
-async chatStructured<T>(request: ChatRequest, schema: ZodType<T>): Promise<T> {
-  const jsonSchema = zodToJsonSchema(schema);
-  const res = await this.chat({
-    ...request,
-    response_format: { type: "json_schema", json_schema: { name: "response", schema: jsonSchema } },
-  });
-  const text = res.choices[0].message.content as string;
-  return schema.parse(JSON.parse(text));
-}
-```
-
-For providers that don't support `json_schema` natively, the transform layer
-injects "Respond in JSON matching this schema: ..." into the system prompt.
-Fallback costs ~5 lines in each transform.
-
----
-
-## Code Reuse Strategy: Why This Works
-
-| Technique | Lines Saved |
-|---|---|
-| OpenAI format as lingua franca | Eliminates type mapping for 8+ providers |
-| Config table instead of per-provider classes | ~100 lines/provider × 8 = ~800 lines |
-| Pure transform functions (not classes) | No inheritance hierarchy, no base class ceremony |
-| Single middleware file | No directory, no barrel exports, no types file |
-| Built-in structured output | No separate module |
-| `fetch()` directly instead of SDK wrappers | No SDK adapter layer for OpenAI-compat providers |
-
-**Original plan: ~40 files, ~2500+ lines estimated.**
-**Ultraplan: ~12 files, ~800 lines.**
-
----
-
-## Implementation Order
-
-### Phase 1: Working in 4 files (~400 lines)
-1. `types.ts` — unified types
-2. `provider.ts` — OpenAI-compatible provider (fetch-based, chat + stream + embed)
-3. `registry.ts` — provider config table (OpenAI, Groq, Together, Ollama, Mistral, DeepSeek, Fireworks, Perplexity)
-4. `client.ts` — AgentLoop class with model routing
-5. `errors.ts` — error mapping
-
-**Result:** Chat, streaming, embeddings, tool calling working across 8+ providers.
-
-### Phase 2: The two real adapters (~300 lines)
-6. `transforms/anthropic.ts` — request/response/stream transforms
-7. `transforms/google.ts` — request/response/stream transforms
-
-**Result:** Full provider coverage including Anthropic + Google.
-
-### Phase 3: Middleware + structured output (~150 lines)
-8. `middleware.ts` — compose + retry + fallback + cache + logger
-
-**Result:** Production-ready with retry, fallback, caching.
-
-### Phase 4: Package + tests
-9. `index.ts` — public API
-10. Tests
-11. Build config (tsup, tsconfig)
-12. package.json with optional peer deps
-
----
-
-## Usage (unchanged from original — same DX)
-
-```typescript
-import { AgentLoop } from "agentloop";
-
-const ai = new AgentLoop({
-  providers: {
-    openai:    { apiKey: process.env.OPENAI_API_KEY },
-    anthropic: { apiKey: process.env.ANTHROPIC_API_KEY },
-    groq:      { apiKey: process.env.GROQ_API_KEY },
-    ollama:    { baseURL: "http://localhost:11434/v1" },
-  },
-});
-
-// Works identically across ALL providers:
-const res = await ai.chat({
-  model: "groq/llama-3.3-70b-versatile",
-  messages: [{ role: "user", content: "Hello!" }],
-});
-
-// Swap provider by changing one string:
-const res2 = await ai.chat({
-  model: "anthropic/claude-sonnet-4-20250514",
-  messages: [{ role: "user", content: "Hello!" }],
-});
-```
-
----
-
-## Summary
-
-| Aspect | Original Plan | Ultraplan |
+| Aspect | Ultraplan v1 | Ultraplan v2 |
 |---|---|---|
-| Source files | ~40+ | 12 |
-| Lines of code | ~2500+ | ~800 |
-| Provider adapters | 9 separate classes | 1 base + 2 transforms |
-| Adding a new OAI-compat provider | New file + class | 1 line in config table |
-| Type files | 8 | 1 |
-| Middleware files | 7 | 1 |
-| External dependencies | Multiple SDKs | Just `openai` SDK (optional) |
-| Complexity | High | Minimal |
-| Same user-facing API? | Yes | Yes |
+| Provider research | Assumed | Verified against actual API docs |
+| Cohere handling | Separate adapter needed | OpenAI-compat endpoint — config only |
+| Param compatibility | Assumed uniform | Per-provider param filter config |
+| Mistral `seed` | Assumed compatible | Renamed to `random_seed` |
+| Temperature ranges | Assumed uniform | Mistral/Cohere clamped to 0-1 |
+| Perplexity tools | Assumed supported | Not supported — auto-stripped |
+| Ollama tool_choice | Assumed supported | Not supported — auto-stripped |
+| Design patterns | Adapter only | Strategy + Chain of Resp + Proxy + Registry + Discriminated Unions |
+| Files | 12 | 14 (added tests) |
+| Lines | ~800 | ~900 (more precise transforms) |
