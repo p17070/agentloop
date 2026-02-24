@@ -35,6 +35,7 @@ const dom = {
   providerSelect: $("#provider-select"),
   modelInput: $("#model-input"),
   modelHint: $("#model-hint"),
+  modelSuggestions: $("#model-suggestions"),
   apiKeyInput: $("#api-key-input"),
   toggleKeyVis: $("#toggle-key-vis"),
   systemMsg: $("#system-msg"),
@@ -53,6 +54,8 @@ const dom = {
   newChatBtn: $("#new-chat-btn"),
   clearChatBtn: $("#clear-chat-btn"),
   exportBtn: $("#export-btn"),
+  chatSearch: $("#chat-search"),
+  chatCount: $("#chat-count"),
   chatList: $("#chat-list"),
   messages: $("#messages"),
   userInput: $("#user-input"),
@@ -198,6 +201,65 @@ function setupEventListeners() {
       sendMessage();
     }
   });
+
+  // Chat search/filter
+  dom.chatSearch.addEventListener("input", renderChatList);
+
+  // Keyboard shortcuts
+  document.addEventListener("keydown", handleKeyboardShortcuts);
+}
+
+// ─── Keyboard Shortcuts ──────────────────────────────────────────────────────
+
+function handleKeyboardShortcuts(e) {
+  // Don't fire shortcuts when typing in inputs (except Escape)
+  const isInput = e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT";
+
+  // Escape: close sidebar on mobile, or blur active input
+  if (e.key === "Escape") {
+    if (isInput) {
+      e.target.blur();
+      return;
+    }
+    if (window.innerWidth <= 768 && !dom.sidebar.classList.contains("collapsed")) {
+      toggleSidebar(false);
+      return;
+    }
+  }
+
+  if (isInput) return;
+
+  // Ctrl/Cmd + N: New chat
+  if ((e.ctrlKey || e.metaKey) && e.key === "n") {
+    e.preventDefault();
+    newChat();
+    return;
+  }
+
+  // Ctrl/Cmd + Shift + S: Toggle sidebar
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "S") {
+    e.preventDefault();
+    const isCollapsed = dom.sidebar.classList.contains("collapsed");
+    toggleSidebar(isCollapsed);
+    return;
+  }
+
+  // Ctrl/Cmd + K: Focus chat search
+  if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+    e.preventDefault();
+    if (dom.sidebar.classList.contains("collapsed")) {
+      toggleSidebar(true);
+    }
+    dom.chatSearch.focus();
+    return;
+  }
+
+  // /: Focus message input
+  if (e.key === "/" && !state.isGenerating) {
+    e.preventDefault();
+    dom.userInput.focus();
+    return;
+  }
 }
 
 // ─── Sidebar ────────────────────────────────────────────────────────────────
@@ -235,7 +297,8 @@ function applyProvider(provider) {
   dom.modelInput.value = state.model;
   dom.modelInput.placeholder = entry.defaultModel;
 
-  // Model suggestions
+  // Model suggestions — populate datalist and hint
+  dom.modelSuggestions.innerHTML = entry.models.map(m => `<option value="${m}">`).join("");
   dom.modelHint.textContent = entry.models.slice(0, 4).join(", ");
 
   // Load API key
@@ -330,13 +393,95 @@ function switchChat(chatId) {
 }
 
 function deleteChat(chatId) {
-  state.chats = state.chats.filter(c => c.id !== chatId);
-  if (state.activeChatId === chatId) {
-    state.activeChatId = state.chats[0]?.id || null;
-  }
-  renderMessages();
-  renderChatList();
-  saveState();
+  const chat = state.chats.find(c => c.id === chatId);
+  const title = chat ? chat.title : "this chat";
+  showConfirmDialog(
+    "Delete chat?",
+    `"${title}" will be permanently deleted.`,
+    "Delete",
+    () => {
+      state.chats = state.chats.filter(c => c.id !== chatId);
+      if (state.activeChatId === chatId) {
+        state.activeChatId = state.chats[0]?.id || null;
+      }
+      renderMessages();
+      renderChatList();
+      saveState();
+    }
+  );
+}
+
+function renameChat(chatId) {
+  const item = dom.chatList.querySelector(`.chat-list-item[data-chat-id="${chatId}"]`);
+  if (!item) return;
+
+  const titleSpan = item.querySelector(".chat-title");
+  const chat = state.chats.find(c => c.id === chatId);
+  if (!titleSpan || !chat) return;
+
+  // Replace title span with an input
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "chat-title-input";
+  input.value = chat.title;
+  input.setAttribute("maxlength", "100");
+  titleSpan.replaceWith(input);
+  input.focus();
+  input.select();
+
+  const commitRename = () => {
+    const newTitle = input.value.trim() || chat.title;
+    chat.title = newTitle;
+    saveState();
+    renderChatList();
+  };
+
+  input.addEventListener("blur", commitRename);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      input.blur();
+    }
+    if (e.key === "Escape") {
+      input.value = chat.title; // revert
+      input.blur();
+    }
+  });
+}
+
+function showConfirmDialog(title, message, confirmLabel, onConfirm) {
+  // Remove any existing dialog
+  const existing = document.querySelector(".confirm-overlay");
+  if (existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.className = "confirm-overlay";
+  overlay.innerHTML = `
+    <div class="confirm-dialog">
+      <h3>${escapeHtml(title)}</h3>
+      <p>${escapeHtml(message)}</p>
+      <div class="confirm-actions">
+        <button class="btn confirm-cancel">Cancel</button>
+        <button class="btn btn-danger confirm-ok">${escapeHtml(confirmLabel)}</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+
+  const cancel = () => overlay.remove();
+  overlay.querySelector(".confirm-cancel").addEventListener("click", cancel);
+  overlay.querySelector(".confirm-ok").addEventListener("click", () => {
+    overlay.remove();
+    onConfirm();
+  });
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) cancel();
+  });
+  // Focus the cancel button so Escape works naturally
+  overlay.querySelector(".confirm-cancel").focus();
+  overlay.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") cancel();
+  });
 }
 
 function clearCurrentChat() {
@@ -738,20 +883,65 @@ function autoResize() {
 // ─── Chat List Rendering ────────────────────────────────────────────────────
 
 function renderChatList() {
-  dom.chatList.innerHTML = state.chats.map(chat => `
-    <div class="chat-list-item ${chat.id === state.activeChatId ? "active" : ""}"
-         data-chat-id="${chat.id}"
-         onclick="window._switchChat('${chat.id}')">
-      <span class="chat-title">${escapeHtml(chat.title)}</span>
-      <button class="icon-btn chat-delete" onclick="event.stopPropagation(); window._deleteChat('${chat.id}')" title="Delete">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-    </div>`).join("");
-}
+  const query = (dom.chatSearch.value || "").trim().toLowerCase();
+  const filtered = query
+    ? state.chats.filter(c => c.title.toLowerCase().includes(query))
+    : state.chats;
 
-// Expose functions for inline handlers
-window._switchChat = switchChat;
-window._deleteChat = deleteChat;
+  // Update count
+  dom.chatCount.textContent = state.chats.length > 0 ? state.chats.length : "";
+
+  if (filtered.length === 0) {
+    dom.chatList.innerHTML = query
+      ? `<div class="chat-list-empty">No chats matching "${escapeHtml(query)}"</div>`
+      : `<div class="chat-list-empty">No chats yet</div>`;
+    return;
+  }
+
+  dom.chatList.innerHTML = filtered.map(chat => `
+    <div class="chat-list-item ${chat.id === state.activeChatId ? "active" : ""}"
+         data-chat-id="${chat.id}">
+      <svg class="chat-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      <span class="chat-title">${escapeHtml(chat.title)}</span>
+      <div class="chat-actions">
+        <button class="icon-btn chat-rename" data-chat-id="${chat.id}" title="Rename">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+        </button>
+        <button class="icon-btn chat-delete" data-chat-id="${chat.id}" title="Delete">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        </button>
+      </div>
+    </div>`).join("");
+
+  // Attach event listeners (avoids inline onclick)
+  dom.chatList.querySelectorAll(".chat-list-item").forEach(item => {
+    const chatId = item.dataset.chatId;
+
+    // Click to switch, double-click to rename
+    item.addEventListener("click", (e) => {
+      if (e.target.closest(".chat-actions")) return;
+      switchChat(chatId);
+    });
+    item.addEventListener("dblclick", (e) => {
+      if (e.target.closest(".chat-actions")) return;
+      renameChat(chatId);
+    });
+  });
+
+  dom.chatList.querySelectorAll(".chat-rename").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      renameChat(btn.dataset.chatId);
+    });
+  });
+
+  dom.chatList.querySelectorAll(".chat-delete").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteChat(btn.dataset.chatId);
+    });
+  });
+}
 
 // ─── State Persistence ──────────────────────────────────────────────────────
 
