@@ -1390,11 +1390,14 @@ async function runAgentLoop(chat) {
 function buildApiMessages(chat) {
   const messages = [];
   for (const msg of chat.messages) {
-    if (msg.role === "user" || msg.role === "assistant") {
-      // Check if it's an assistant message with tool_calls metadata
-      if (msg._toolCalls) {
-        messages.push({ role: "assistant", content: msg.content, tool_calls: msg._toolCalls, _isGeminiToolCall: msg._isGeminiToolCall });
-      } else {
+    if (msg.role === "user") {
+      messages.push({ role: msg.role, content: msg.content });
+    } else if (msg.role === "assistant") {
+      // Skip assistant messages annotated with _toolCalls — the following
+      // tool_result's _apiMessages already contains the correctly formatted
+      // assistant message (with tool_use blocks for Anthropic, functionCall
+      // parts for Gemini, or tool_calls for OpenAI-compatible providers).
+      if (!msg._toolCalls) {
         messages.push({ role: msg.role, content: msg.content });
       }
     } else if (msg.role === "tool_result") {
