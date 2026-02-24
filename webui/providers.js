@@ -116,6 +116,16 @@ const PROVIDERS = {
     corsNote: "May require a CORS proxy.",
   },
 
+  xai: {
+    name: "xAI",
+    baseURL: "https://api.x.ai/v1",
+    auth: "bearer",
+    defaultModel: "grok-4-1-fast-non-reasoning",
+    models: ["grok-4-1-fast-non-reasoning", "grok-4-1-fast-reasoning", "grok-4", "grok-3-beta", "grok-3-mini-beta"],
+    chatEndpoint: (baseURL, _model) => `${baseURL}/chat/completions`,
+    corsNote: "May require a CORS proxy.",
+  },
+
   ollama: {
     name: "Ollama",
     baseURL: "http://localhost:11434/v1",
@@ -128,6 +138,295 @@ const PROVIDERS = {
   },
 };
 
+// ─── Model Catalog ──────────────────────────────────────────────────────────
+
+const MODEL_CATALOG = [
+  // ── OpenAI ──────────────────────────────────────────────────────────────
+  { id: "gpt-5.2", name: "GPT-5.2", provider: "openai", categories: ["flagship"], ctx: 128000, maxOut: 16384, isDefault: true },
+  { id: "gpt-5", name: "GPT-5", provider: "openai", categories: ["flagship"], ctx: 128000, maxOut: 16384 },
+  { id: "gpt-5-mini", name: "GPT-5 Mini", provider: "openai", categories: ["fast"], ctx: 128000, maxOut: 16384 },
+  { id: "gpt-4.1", name: "GPT-4.1", provider: "openai", categories: ["flagship", "code"], ctx: 1000000, maxOut: 32768 },
+  { id: "gpt-4.1-mini", name: "GPT-4.1 Mini", provider: "openai", categories: ["fast"], ctx: 1000000, maxOut: 32768 },
+  { id: "gpt-4.1-nano", name: "GPT-4.1 Nano", provider: "openai", categories: ["fast"], ctx: 1000000, maxOut: 32768 },
+  { id: "o4-mini", name: "o4-mini", provider: "openai", categories: ["reasoning"], ctx: 200000, maxOut: 100000 },
+  { id: "o3", name: "o3", provider: "openai", categories: ["reasoning"], ctx: 200000, maxOut: 100000 },
+  { id: "o3-pro", name: "o3 Pro", provider: "openai", categories: ["reasoning"], ctx: 200000, maxOut: 100000 },
+  { id: "o3-mini", name: "o3 Mini", provider: "openai", categories: ["reasoning", "fast"], ctx: 200000, maxOut: 100000 },
+  { id: "o1", name: "o1", provider: "openai", categories: ["reasoning"], ctx: 200000, maxOut: 100000 },
+  { id: "gpt-4o", name: "GPT-4o", provider: "openai", categories: ["flagship", "vision"], ctx: 128000, maxOut: 16384 },
+  { id: "gpt-4o-mini", name: "GPT-4o Mini", provider: "openai", categories: ["fast", "vision"], ctx: 128000, maxOut: 16384 },
+  { id: "gpt-4o-search-preview", name: "GPT-4o Search", provider: "openai", categories: ["search"], ctx: 128000, maxOut: 16384 },
+
+  // ── Anthropic ───────────────────────────────────────────────────────────
+  { id: "claude-opus-4-6", name: "Claude Opus 4.6", provider: "anthropic", categories: ["flagship", "code", "reasoning"], ctx: 200000, maxOut: 128000 },
+  { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", provider: "anthropic", categories: ["flagship", "code"], ctx: 200000, maxOut: 64000, isDefault: true },
+  { id: "claude-opus-4-5-20251101", name: "Claude Opus 4.5", provider: "anthropic", categories: ["flagship", "code"], ctx: 200000, maxOut: 32000 },
+  { id: "claude-sonnet-4-5-20241022", name: "Claude Sonnet 4.5", provider: "anthropic", categories: ["flagship", "code"], ctx: 200000, maxOut: 16000 },
+  { id: "claude-opus-4-1-20250630", name: "Claude Opus 4.1", provider: "anthropic", categories: ["flagship", "code"], ctx: 200000, maxOut: 32000 },
+  { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", provider: "anthropic", categories: ["flagship", "code"], ctx: 200000, maxOut: 16000 },
+  { id: "claude-3-5-haiku-20241022", name: "Claude 3.5 Haiku", provider: "anthropic", categories: ["fast"], ctx: 200000, maxOut: 8192 },
+
+  // ── Google Gemini ───────────────────────────────────────────────────────
+  { id: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro (Preview)", provider: "google", categories: ["flagship", "reasoning", "code"], ctx: 1000000, maxOut: 65536 },
+  { id: "gemini-3-flash-preview", name: "Gemini 3 Flash (Preview)", provider: "google", categories: ["fast", "reasoning", "vision"], ctx: 1000000, maxOut: 65536 },
+  { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", provider: "google", categories: ["flagship", "reasoning", "code"], ctx: 1000000, maxOut: 65536, isDefault: true },
+  { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", provider: "google", categories: ["fast", "reasoning"], ctx: 1000000, maxOut: 65536 },
+  { id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash Lite", provider: "google", categories: ["fast"], ctx: 1000000, maxOut: 65536 },
+  { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash", provider: "google", categories: ["fast", "vision"], ctx: 1000000, maxOut: 8192 },
+  { id: "gemini-2.0-flash-lite", name: "Gemini 2.0 Flash Lite", provider: "google", categories: ["fast"], ctx: 1000000, maxOut: 8192 },
+
+  // ── Groq ────────────────────────────────────────────────────────────────
+  { id: "meta-llama/llama-4-maverick-17b-128e-instruct", name: "Llama 4 Maverick", provider: "groq", categories: ["flagship", "vision"], ctx: 128000 },
+  { id: "meta-llama/llama-4-scout-17b-16e-instruct", name: "Llama 4 Scout", provider: "groq", categories: ["fast", "vision"], ctx: 128000, isDefault: true },
+  { id: "llama-3.3-70b-versatile", name: "Llama 3.3 70B", provider: "groq", categories: ["flagship"], ctx: 128000 },
+  { id: "llama-3.1-8b-instant", name: "Llama 3.1 8B", provider: "groq", categories: ["fast"], ctx: 128000 },
+  { id: "qwen/qwen-3-32b", name: "Qwen 3 32B", provider: "groq", categories: ["flagship", "reasoning"], ctx: 128000 },
+  { id: "deepseek-r1-distill-llama-70b", name: "DeepSeek R1 Distill 70B", provider: "groq", categories: ["reasoning"], ctx: 128000 },
+  { id: "openai/gpt-oss-120b", name: "GPT-OSS 120B", provider: "groq", categories: ["flagship"], ctx: 128000 },
+
+  // ── Together AI ─────────────────────────────────────────────────────────
+  { id: "deepseek-ai/DeepSeek-R1", name: "DeepSeek R1", provider: "together", categories: ["reasoning"], ctx: 128000 },
+  { id: "deepseek-ai/DeepSeek-V3.1", name: "DeepSeek V3.1", provider: "together", categories: ["flagship"], ctx: 128000 },
+  { id: "DeepSeek-AI/DeepSeek-V3-2-Exp", name: "DeepSeek V3.2 Exp", provider: "together", categories: ["flagship"], ctx: 128000 },
+  { id: "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8", name: "Llama 4 Maverick", provider: "together", categories: ["flagship"], ctx: 128000 },
+  { id: "meta-llama/Llama-4-Scout-17B-16E-Instruct", name: "Llama 4 Scout", provider: "together", categories: ["fast"], ctx: 128000 },
+  { id: "meta-llama/Llama-3.3-70B-Instruct-Turbo", name: "Llama 3.3 70B Turbo", provider: "together", categories: ["flagship"], ctx: 128000, isDefault: true },
+  { id: "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo", name: "Llama 3.1 405B Turbo", provider: "together", categories: ["flagship"], ctx: 128000 },
+  { id: "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo", name: "Llama 3.1 8B Turbo", provider: "together", categories: ["fast"], ctx: 128000 },
+  { id: "Qwen/Qwen2.5-72B-Instruct-Turbo", name: "Qwen 2.5 72B Turbo", provider: "together", categories: ["flagship"], ctx: 128000 },
+  { id: "Qwen/QwQ-32B", name: "Qwen QwQ 32B", provider: "together", categories: ["reasoning"], ctx: 128000 },
+  { id: "Qwen/Qwen2.5-Coder-32B-Instruct", name: "Qwen 2.5 Coder 32B", provider: "together", categories: ["code"], ctx: 128000 },
+  { id: "mistralai/Mistral-Small-24B-Instruct-2501", name: "Mistral Small 3", provider: "together", categories: ["fast"], ctx: 32000 },
+
+  // ── Mistral AI ──────────────────────────────────────────────────────────
+  { id: "mistral-large-latest", name: "Mistral Large 3", provider: "mistral", categories: ["flagship"], ctx: 128000, isDefault: true },
+  { id: "mistral-medium-latest", name: "Mistral Medium 3", provider: "mistral", categories: ["flagship"], ctx: 128000 },
+  { id: "mistral-small-latest", name: "Mistral Small 3.2", provider: "mistral", categories: ["fast"], ctx: 128000 },
+  { id: "magistral-medium-latest", name: "Magistral Medium", provider: "mistral", categories: ["reasoning"], ctx: 128000 },
+  { id: "magistral-small-latest", name: "Magistral Small", provider: "mistral", categories: ["reasoning", "fast"], ctx: 128000 },
+  { id: "codestral-latest", name: "Codestral", provider: "mistral", categories: ["code"], ctx: 256000 },
+  { id: "devstral-medium-latest", name: "Devstral Medium", provider: "mistral", categories: ["code"], ctx: 256000 },
+  { id: "pixtral-large-latest", name: "Pixtral Large", provider: "mistral", categories: ["vision", "flagship"], ctx: 128000 },
+  { id: "ministral-8b-latest", name: "Ministral 8B", provider: "mistral", categories: ["fast"], ctx: 128000 },
+  { id: "ministral-3b-latest", name: "Ministral 3B", provider: "mistral", categories: ["fast"], ctx: 128000 },
+
+  // ── DeepSeek ────────────────────────────────────────────────────────────
+  { id: "deepseek-chat", name: "DeepSeek V3.2 Chat", provider: "deepseek", categories: ["flagship", "code"], ctx: 128000, maxOut: 8192, isDefault: true },
+  { id: "deepseek-reasoner", name: "DeepSeek V3.2 Reasoner", provider: "deepseek", categories: ["reasoning"], ctx: 128000, maxOut: 8192 },
+
+  // ── Fireworks AI ────────────────────────────────────────────────────────
+  { id: "accounts/fireworks/models/deepseek-v3p2", name: "DeepSeek V3.2", provider: "fireworks", categories: ["flagship"], ctx: 160000, isDefault: true },
+  { id: "accounts/fireworks/models/deepseek-r1-0528", name: "DeepSeek R1", provider: "fireworks", categories: ["reasoning"], ctx: 160000 },
+  { id: "accounts/fireworks/models/llama-v3p3-70b-instruct", name: "Llama 3.3 70B", provider: "fireworks", categories: ["flagship"], ctx: 128000 },
+  { id: "accounts/fireworks/models/llama-v3p1-8b-instruct", name: "Llama 3.1 8B", provider: "fireworks", categories: ["fast"], ctx: 128000 },
+  { id: "accounts/fireworks/models/qwen3-coder-480b-a35b-instruct", name: "Qwen3 Coder 480B", provider: "fireworks", categories: ["code"], ctx: 256000 },
+
+  // ── Perplexity ──────────────────────────────────────────────────────────
+  { id: "sonar-pro", name: "Sonar Pro", provider: "perplexity", categories: ["search", "flagship"], ctx: 200000, isDefault: true },
+  { id: "sonar", name: "Sonar", provider: "perplexity", categories: ["search", "fast"], ctx: 128000 },
+  { id: "sonar-reasoning-pro", name: "Sonar Reasoning Pro", provider: "perplexity", categories: ["search", "reasoning"], ctx: 128000 },
+  { id: "sonar-reasoning", name: "Sonar Reasoning", provider: "perplexity", categories: ["search", "reasoning"], ctx: 128000 },
+  { id: "sonar-deep-research", name: "Sonar Deep Research", provider: "perplexity", categories: ["search", "reasoning"], ctx: 128000 },
+
+  // ── Cohere ──────────────────────────────────────────────────────────────
+  { id: "command-a-03-2025", name: "Command A", provider: "cohere", categories: ["flagship"], ctx: 256000, isDefault: true },
+  { id: "command-r-plus-08-2024", name: "Command R+", provider: "cohere", categories: ["flagship"], ctx: 128000 },
+  { id: "command-r-08-2024", name: "Command R", provider: "cohere", categories: ["fast"], ctx: 128000 },
+  { id: "c4ai-command-r7b-12-2024", name: "Command R7B", provider: "cohere", categories: ["fast"], ctx: 128000 },
+
+  // ── xAI (Grok) ─────────────────────────────────────────────────────────
+  { id: "grok-4-1-fast-reasoning", name: "Grok 4.1 Fast Reasoning", provider: "xai", categories: ["flagship", "reasoning"], ctx: 2000000 },
+  { id: "grok-4-1-fast-non-reasoning", name: "Grok 4.1 Fast", provider: "xai", categories: ["flagship", "fast"], ctx: 2000000, isDefault: true },
+  { id: "grok-4", name: "Grok 4", provider: "xai", categories: ["flagship", "reasoning"], ctx: 256000 },
+  { id: "grok-3-beta", name: "Grok 3", provider: "xai", categories: ["flagship"], ctx: 131000 },
+  { id: "grok-3-mini-beta", name: "Grok 3 Mini", provider: "xai", categories: ["fast", "reasoning"], ctx: 131000 },
+  { id: "grok-3-fast-beta", name: "Grok 3 Fast", provider: "xai", categories: ["fast"], ctx: 131000 },
+  { id: "grok-2-1212", name: "Grok 2", provider: "xai", categories: ["flagship"], ctx: 131000 },
+  { id: "grok-2-vision-1212", name: "Grok 2 Vision", provider: "xai", categories: ["vision"], ctx: 131000 },
+  { id: "grok-code-fast-1", name: "Grok Code", provider: "xai", categories: ["code"], ctx: 256000 },
+
+  // ── Ollama (local) ──────────────────────────────────────────────────────
+  { id: "llama4:scout", name: "Llama 4 Scout", provider: "ollama", categories: ["flagship", "vision"], ctx: 128000, isDefault: true },
+  { id: "llama4:maverick", name: "Llama 4 Maverick", provider: "ollama", categories: ["flagship"], ctx: 128000 },
+  { id: "llama3.3", name: "Llama 3.3 70B", provider: "ollama", categories: ["flagship"], ctx: 128000 },
+  { id: "llama3.2", name: "Llama 3.2 3B", provider: "ollama", categories: ["fast"], ctx: 128000 },
+  { id: "qwen3", name: "Qwen 3", provider: "ollama", categories: ["flagship", "reasoning"], ctx: 128000 },
+  { id: "deepseek-r1", name: "DeepSeek R1", provider: "ollama", categories: ["reasoning"], ctx: 128000 },
+  { id: "mistral", name: "Mistral 7B", provider: "ollama", categories: ["fast"], ctx: 32000 },
+  { id: "codellama", name: "Code Llama", provider: "ollama", categories: ["code"], ctx: 16000 },
+  { id: "gemma3", name: "Gemma 3", provider: "ollama", categories: ["fast"], ctx: 128000 },
+  { id: "phi4", name: "Phi-4", provider: "ollama", categories: ["fast", "reasoning"], ctx: 16000 },
+];
+
+// Category display config
+const CATEGORY_META = {
+  flagship: { label: "Flagship", icon: "star" },
+  fast: { label: "Fast", icon: "zap" },
+  reasoning: { label: "Reasoning", icon: "brain" },
+  code: { label: "Code", icon: "code" },
+  vision: { label: "Vision", icon: "eye" },
+  search: { label: "Search", icon: "search" },
+  embedding: { label: "Embedding", icon: "grid" },
+};
+
+// ─── Model Helpers ──────────────────────────────────────────────────────────
+
+/** Get models for a specific provider, optionally filtered by search query */
+function getModelsForProvider(provider, query) {
+  let models = MODEL_CATALOG.filter(m => m.provider === provider);
+  if (query) {
+    const q = query.toLowerCase();
+    models = models.filter(m =>
+      m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q) ||
+      m.categories.some(c => c.toLowerCase().includes(q))
+    );
+  }
+  return models;
+}
+
+/** Get the default model from the catalog for a provider */
+function getCatalogDefault(provider) {
+  return MODEL_CATALOG.find(m => m.provider === provider && m.isDefault);
+}
+
+/** Format context window size: 128000 → "128k", 1000000 → "1M" */
+function fmtCtx(n) {
+  if (!n) return "";
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1) + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(0) + "k";
+  return n.toString();
+}
+
+/** Group models by their primary category, preserving order */
+function groupByCategory(models) {
+  const order = ["flagship", "fast", "reasoning", "code", "vision", "search", "embedding"];
+  const groups = new Map();
+  const assigned = new Set();
+
+  for (const cat of order) {
+    const inCat = models.filter(m => m.categories.includes(cat) && !assigned.has(m.id));
+    if (inCat.length > 0) {
+      groups.set(cat, inCat);
+      inCat.forEach(m => assigned.add(m.id));
+    }
+  }
+
+  // Any remaining unassigned models
+  const remaining = models.filter(m => !assigned.has(m.id));
+  if (remaining.length > 0) {
+    groups.set("other", remaining);
+  }
+
+  return groups;
+}
+
+// ─── Custom Provider Management ─────────────────────────────────────────────
+
+/** Load custom providers from localStorage */
+function loadCustomProviders() {
+  try {
+    return JSON.parse(localStorage.getItem("agentloop_custom_providers") || "{}");
+  } catch {
+    return {};
+  }
+}
+
+/** Save custom providers to localStorage */
+function saveCustomProviders(customProviders) {
+  localStorage.setItem("agentloop_custom_providers", JSON.stringify(customProviders));
+}
+
+/** Register a custom provider into the PROVIDERS registry */
+function registerCustomProvider(id, config) {
+  PROVIDERS[id] = {
+    name: config.name,
+    baseURL: config.baseURL,
+    auth: config.auth || "bearer",
+    defaultModel: config.defaultModel || "",
+    models: config.models || [],
+    chatEndpoint: config.transform === "anthropic"
+      ? (baseURL, _model) => `${baseURL}/messages`
+      : config.transform === "google"
+        ? (baseURL, model, stream) => `${baseURL}/models/${model}:${stream ? "streamGenerateContent?alt=sse" : "generateContent"}`
+        : (baseURL, _model) => `${baseURL}/chat/completions`,
+    transform: config.transform || undefined,
+    headers: config.headers || undefined,
+    strip: config.strip || undefined,
+    corsNote: config.corsNote || "",
+    isCustom: true,
+  };
+}
+
+/** Load and register all saved custom providers on startup */
+function initCustomProviders() {
+  const custom = loadCustomProviders();
+  for (const [id, config] of Object.entries(custom)) {
+    registerCustomProvider(id, config);
+  }
+}
+
+/** Add a new custom provider */
+function addCustomProvider(config) {
+  const id = "custom_" + config.name.toLowerCase().replace(/[^a-z0-9]/g, "_");
+  const custom = loadCustomProviders();
+  custom[id] = config;
+  saveCustomProviders(custom);
+  registerCustomProvider(id, config);
+  return id;
+}
+
+/** Remove a custom provider */
+function removeCustomProvider(id) {
+  const custom = loadCustomProviders();
+  delete custom[id];
+  saveCustomProviders(custom);
+  delete PROVIDERS[id];
+}
+
+// ─── Per-Provider Endpoint Overrides ────────────────────────────────────────
+
+/** Load per-provider endpoint overrides from localStorage */
+function loadEndpointOverrides() {
+  try {
+    return JSON.parse(localStorage.getItem("agentloop_endpoint_overrides") || "{}");
+  } catch {
+    return {};
+  }
+}
+
+/** Save per-provider endpoint overrides */
+function saveEndpointOverrides(overrides) {
+  localStorage.setItem("agentloop_endpoint_overrides", JSON.stringify(overrides));
+}
+
+/** Get the effective base URL for a provider (custom override or default) */
+function getEffectiveBaseURL(provider) {
+  const overrides = loadEndpointOverrides();
+  return overrides[provider]?.baseURL || PROVIDERS[provider]?.baseURL || "";
+}
+
+/** Get custom headers for a provider */
+function getCustomHeaders(provider) {
+  const overrides = loadEndpointOverrides();
+  return overrides[provider]?.headers || {};
+}
+
+/** Set endpoint override for a provider */
+function setEndpointOverride(provider, baseURL, headers) {
+  const overrides = loadEndpointOverrides();
+  if (!baseURL && (!headers || Object.keys(headers).length === 0)) {
+    delete overrides[provider];
+  } else {
+    overrides[provider] = {};
+    if (baseURL) overrides[provider].baseURL = baseURL;
+    if (headers && Object.keys(headers).length > 0) overrides[provider].headers = headers;
+  }
+  saveEndpointOverrides(overrides);
+}
+
+// Initialize custom providers on load
+initCustomProviders();
+
 // ─── Header Builder ─────────────────────────────────────────────────────────
 
 function buildHeaders(provider, apiKey) {
@@ -136,13 +435,13 @@ function buildHeaders(provider, apiKey) {
 
   switch (entry.auth) {
     case "bearer":
-      headers["authorization"] = `Bearer ${apiKey}`;
+      if (apiKey) headers["authorization"] = `Bearer ${apiKey}`;
       break;
     case "x-api-key":
-      headers["x-api-key"] = apiKey;
+      if (apiKey) headers["x-api-key"] = apiKey;
       break;
     case "x-goog-api-key":
-      headers["x-goog-api-key"] = apiKey;
+      if (apiKey) headers["x-goog-api-key"] = apiKey;
       break;
     case "none":
       break;
@@ -150,6 +449,12 @@ function buildHeaders(provider, apiKey) {
 
   if (entry.headers) {
     Object.assign(headers, entry.headers);
+  }
+
+  // Apply per-provider custom headers
+  const customHeaders = getCustomHeaders(provider);
+  if (customHeaders && Object.keys(customHeaders).length > 0) {
+    Object.assign(headers, customHeaders);
   }
 
   return headers;
@@ -161,9 +466,9 @@ function buildHeaders(provider, apiKey) {
  * Build the request body and URL for any provider.
  * Returns { url, headers, body } ready for fetch().
  */
-function buildRequest({ provider, model, messages, systemMessage, temperature, maxTokens, topP, stream, corsProxy, customEndpoint }) {
+function buildRequest({ provider, model, messages, systemMessage, temperature, maxTokens, topP, stream, corsProxy }) {
   const entry = PROVIDERS[provider];
-  const baseURL = customEndpoint || entry.baseURL;
+  const baseURL = getEffectiveBaseURL(provider);
   const apiKey = getApiKey(provider);
 
   if (!apiKey && entry.auth !== "none") {
@@ -185,6 +490,12 @@ function buildRequest({ provider, model, messages, systemMessage, temperature, m
     ({ url, headers, body } = buildGeminiRequest(baseURL, model, apiKey, fullMessages, { temperature, maxTokens, topP, stream }));
   } else {
     ({ url, headers, body } = buildOpenAIRequest(provider, baseURL, model, apiKey, fullMessages, { temperature, maxTokens, topP, stream }));
+  }
+
+  // Apply per-provider custom headers on top
+  const customHdrs = getCustomHeaders(provider);
+  if (customHdrs && Object.keys(customHdrs).length > 0) {
+    Object.assign(headers, customHdrs);
   }
 
   // Apply CORS proxy if set
