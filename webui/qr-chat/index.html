@@ -1,0 +1,1105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>QR Chat — Serverless Conversations</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --accent-dim: #1f6feb;
+    --green: #3fb950;
+    --red: #f85149;
+    --radius: 12px;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    overflow: hidden;
+  }
+  .screen {
+    display: none;
+    flex-direction: column;
+    height: 100dvh;
+    width: 100%;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+  .screen.active { display: flex; }
+
+  /* Header bar */
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .header h1 { font-size: 18px; font-weight: 600; flex: 1; }
+  .header .subtitle { font-size: 13px; color: var(--text-muted); }
+  .back-btn {
+    background: none;
+    border: none;
+    color: var(--accent);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 6px;
+  }
+  .back-btn:hover { background: rgba(88,166,255,0.1); }
+
+  /* Home screen */
+  .home-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    padding: 32px;
+  }
+  .home-body .logo {
+    font-size: 64px;
+    line-height: 1;
+    opacity: 0.8;
+  }
+  .home-body h2 {
+    font-size: 24px;
+    font-weight: 700;
+    text-align: center;
+  }
+  .home-body p {
+    color: var(--text-muted);
+    text-align: center;
+    font-size: 14px;
+    line-height: 1.5;
+    max-width: 300px;
+  }
+  .btn-group {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+    max-width: 300px;
+  }
+  .btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 14px 24px;
+    border: none;
+    border-radius: var(--radius);
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.1s, opacity 0.2s;
+    font-family: var(--font);
+  }
+  .btn:active { transform: scale(0.97); }
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+  }
+  .btn-secondary {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Name input screen */
+  .name-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    padding: 32px;
+  }
+  .name-body label {
+    font-size: 16px;
+    color: var(--text-muted);
+  }
+  .input {
+    width: 100%;
+    max-width: 300px;
+    padding: 12px 16px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 18px;
+    font-family: var(--font);
+    text-align: center;
+    outline: none;
+  }
+  .input:focus { border-color: var(--accent); }
+
+  /* Chat screen */
+  .chat-header-info {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+  }
+  .chat-header-info .participants {
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .chat-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .msg {
+    max-width: 80%;
+    padding: 8px 12px;
+    border-radius: 16px;
+    font-size: 15px;
+    line-height: 1.4;
+    word-break: break-word;
+  }
+  .msg.mine {
+    align-self: flex-end;
+    background: var(--accent-dim);
+    color: #fff;
+    border-bottom-right-radius: 4px;
+  }
+  .msg.theirs {
+    align-self: flex-start;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 4px;
+  }
+  .msg .sender {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+    margin-bottom: 2px;
+  }
+  .msg.mine .sender { color: rgba(255,255,255,0.7); }
+  .sys-event {
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-muted);
+    padding: 4px 0;
+  }
+  .chat-input-bar {
+    display: flex;
+    gap: 8px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+    background: var(--bg);
+  }
+  .chat-input-bar input {
+    flex: 1;
+    padding: 10px 14px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 15px;
+    font-family: var(--font);
+    outline: none;
+  }
+  .chat-input-bar input:focus { border-color: var(--accent); }
+  .send-btn {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    border: none;
+    background: var(--accent);
+    color: #fff;
+    font-size: 18px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  /* QR display screen */
+  .qr-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    padding: 24px;
+  }
+  .qr-body canvas, .qr-body img {
+    border-radius: var(--radius);
+    max-width: 280px;
+    max-height: 280px;
+  }
+  .qr-stats {
+    font-size: 13px;
+    color: var(--text-muted);
+    text-align: center;
+    line-height: 1.6;
+  }
+  .qr-actions {
+    display: flex;
+    gap: 12px;
+    width: 100%;
+    max-width: 300px;
+  }
+  .qr-actions .btn { flex: 1; }
+
+  /* Scanner screen */
+  .scanner-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    gap: 16px;
+  }
+  #scanner-region {
+    width: 100%;
+    max-width: 350px;
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  #scanner-region video { border-radius: var(--radius); }
+  .scanner-hint {
+    font-size: 14px;
+    color: var(--text-muted);
+    text-align: center;
+  }
+  .or-divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    max-width: 300px;
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+  .or-divider::before, .or-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* Capacity bar */
+  .capacity-bar {
+    width: 100%;
+    max-width: 280px;
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .capacity-bar .fill {
+    height: 100%;
+    background: var(--green);
+    border-radius: 3px;
+    transition: width 0.3s;
+  }
+  .capacity-bar .fill.warn { background: #d29922; }
+  .capacity-bar .fill.danger { background: var(--red); }
+
+  /* File input styling */
+  .file-input-label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 14px 24px;
+    border-radius: var(--radius);
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    transition: transform 0.1s;
+    font-family: var(--font);
+  }
+  .file-input-label:active { transform: scale(0.97); }
+  .file-input-label input { display: none; }
+
+  /* Misc */
+  .toast {
+    position: fixed;
+    bottom: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 20px;
+    border-radius: 20px;
+    font-size: 14px;
+    z-index: 100;
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<!-- ============================================================ -->
+<!-- SCREEN: Home                                                  -->
+<!-- ============================================================ -->
+<div id="screen-home" class="screen active">
+  <div class="home-body">
+    <div class="logo">&#9641;</div>
+    <h2>QR Chat</h2>
+    <p>Serverless conversations stored entirely in QR codes. No accounts, no internet, no server.</p>
+    <div class="btn-group">
+      <button class="btn btn-primary" onclick="showNameScreen('create')">Start New Conversation</button>
+      <button class="btn btn-secondary" onclick="showScanner()">Scan QR Code</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SCREEN: Enter Name                                            -->
+<!-- ============================================================ -->
+<div id="screen-name" class="screen">
+  <div class="header">
+    <button class="back-btn" onclick="showScreen('home')">&larr;</button>
+    <h1 id="name-screen-title">Your name</h1>
+  </div>
+  <div class="name-body">
+    <label id="name-label">Enter your display name</label>
+    <input class="input" id="name-input" type="text" maxlength="32" placeholder="alice"
+           autofocus autocomplete="off" onkeydown="if(event.key==='Enter') confirmName()">
+    <button class="btn btn-primary" onclick="confirmName()" style="width:100%;max-width:300px">Continue</button>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SCREEN: Chat                                                  -->
+<!-- ============================================================ -->
+<div id="screen-chat" class="screen">
+  <div class="header">
+    <button class="back-btn" onclick="showScreen('home')">&larr;</button>
+    <div class="chat-header-info">
+      <h1 id="chat-title">Conversation</h1>
+      <div class="participants" id="chat-participants"></div>
+    </div>
+    <button class="btn btn-primary" style="padding:8px 16px;font-size:14px" onclick="showQR()">Show QR</button>
+  </div>
+  <div class="chat-body" id="chat-body"></div>
+  <div class="chat-input-bar">
+    <input id="chat-input" type="text" placeholder="Type a message..."
+           autocomplete="off" onkeydown="if(event.key==='Enter') sendMessage()">
+    <button class="send-btn" onclick="sendMessage()">&#9654;</button>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SCREEN: QR Display                                            -->
+<!-- ============================================================ -->
+<div id="screen-qr" class="screen">
+  <div class="header">
+    <button class="back-btn" onclick="showScreen('chat')">&larr; Chat</button>
+    <h1>Share QR Code</h1>
+  </div>
+  <div class="qr-body">
+    <canvas id="qr-canvas"></canvas>
+    <div class="capacity-bar"><div class="fill" id="capacity-fill"></div></div>
+    <div class="qr-stats" id="qr-stats"></div>
+    <div class="qr-actions">
+      <button class="btn btn-secondary" onclick="downloadQR()">Save Image</button>
+      <button class="btn btn-secondary" onclick="shareQR()">Share</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SCREEN: Scanner                                               -->
+<!-- ============================================================ -->
+<div id="screen-scanner" class="screen">
+  <div class="header">
+    <button class="back-btn" onclick="stopScanner(); showScreen('home')">&larr;</button>
+    <h1>Scan QR Code</h1>
+  </div>
+  <div class="scanner-body">
+    <div id="scanner-region"></div>
+    <p class="scanner-hint">Point your camera at a QR Chat code</p>
+    <div class="or-divider">or</div>
+    <label class="file-input-label">
+      Upload QR Image
+      <input type="file" accept="image/*" onchange="handleFileUpload(event)">
+    </label>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- QR Code generation library -->
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
+<!-- QR Code scanner library -->
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+<script>
+// =====================================================================
+// QNCP Codec — Inlined for browser (no modules, no dependencies)
+// =====================================================================
+
+const QNCP = (() => {
+  // --- Mode & TextEncoding enums ---
+  const Mode = { Duo: 0, Group: 1, Solo: 2, Extended: 3 };
+  const TextEncoding = { Utf8: 0, SixBit: 1, Huffman: 2, Deflate: 3 };
+  const EventType = { Enter: 0, Exit: 1 };
+  const QR_CAPACITY = { L: 2953, M: 2331, Q: 1663, H: 1273 };
+
+  // --- Varint ---
+  function encodeVarint(buf, offset, value) {
+    let v = value >>> 0;
+    let pos = offset;
+    while (v >= 0x80) {
+      buf[pos++] = (v & 0x7f) | 0x80;
+      v >>>= 7;
+    }
+    buf[pos++] = v;
+    return pos - offset;
+  }
+
+  function decodeVarint(buf, offset) {
+    let value = 0, shift = 0, pos = offset, byte;
+    do {
+      byte = buf[pos++];
+      value |= (byte & 0x7f) << shift;
+      shift += 7;
+    } while (byte & 0x80);
+    return [value >>> 0, pos - offset];
+  }
+
+  // --- 6-bit text ---
+  const SIXBIT_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789 .,!?'-:\n@#();\"/";
+  const ESCAPE = 63;
+  const charToSixBit = new Map();
+  for (let i = 0; i < SIXBIT_CHARS.length; i++) charToSixBit.set(SIXBIT_CHARS[i], i);
+
+  function encodeSixBit(text) {
+    const bits = [];
+    for (let i = 0; i < text.length; i++) {
+      const code = charToSixBit.get(text[i]);
+      if (code !== undefined) {
+        bits.push(code);
+      } else {
+        bits.push(ESCAPE);
+        const encoded = new TextEncoder().encode(text[i]);
+        for (const b of encoded) bits.push(-b);
+      }
+    }
+    // Pack
+    const output = new Uint8Array(Math.ceil(bits.length * 2));
+    let bitPos = 0;
+    function writeBits(val, count) {
+      for (let i = count - 1; i >= 0; i--) {
+        const byteIdx = bitPos >>> 3;
+        const bitIdx = 7 - (bitPos & 7);
+        if (val & (1 << i)) output[byteIdx] |= 1 << bitIdx;
+        bitPos++;
+      }
+    }
+    for (const v of bits) {
+      if (v >= 0) writeBits(v, 6);
+      else writeBits(-v, 8);
+    }
+    return output.slice(0, Math.ceil(bitPos / 8));
+  }
+
+  function decodeSixBit(data, charCount) {
+    let bitPos = 0;
+    const chars = [];
+    function readBits(count) {
+      let val = 0;
+      for (let i = 0; i < count; i++) {
+        const byteIdx = bitPos >>> 3;
+        const bitIdx = 7 - (bitPos & 7);
+        val = (val << 1) | ((data[byteIdx] >>> bitIdx) & 1);
+        bitPos++;
+      }
+      return val;
+    }
+    while (chars.length < charCount) {
+      const code = readBits(6);
+      if (code === ESCAPE) {
+        const rawByte = readBits(8);
+        chars.push(new TextDecoder().decode(new Uint8Array([rawByte])));
+      } else {
+        chars.push(SIXBIT_CHARS[code]);
+      }
+    }
+    return chars.join("");
+  }
+
+  // --- Turn bitmap ---
+  function encodeTurnBitmap(speakers) {
+    const byteCount = Math.ceil(speakers.length / 8);
+    const bitmap = new Uint8Array(byteCount);
+    for (let i = 1; i < speakers.length; i++) {
+      if (speakers[i] === speakers[i - 1]) {
+        bitmap[i >>> 3] |= 1 << (7 - (i & 7));
+      }
+    }
+    return bitmap;
+  }
+
+  function decodeTurnBitmap(bitmap, messageCount, firstSpeaker) {
+    const speakers = [];
+    if (messageCount === 0) return speakers;
+    speakers.push(firstSpeaker);
+    for (let i = 1; i < messageCount; i++) {
+      const same = (bitmap[i >>> 3] >>> (7 - (i & 7))) & 1;
+      speakers.push(same ? speakers[i - 1] : (speakers[i - 1] === 0 ? 1 : 0));
+    }
+    return speakers;
+  }
+
+  const toUtf8 = (s) => new TextEncoder().encode(s);
+  const fromUtf8 = (b) => new TextDecoder().decode(b);
+
+  // --- Codec: encode ---
+  function writeEncodedText(buf, pos, text, textEnc) {
+    let textBytes;
+    if (textEnc === TextEncoding.SixBit) {
+      textBytes = encodeSixBit(text);
+      pos += encodeVarint(buf, pos, text.length);
+      pos += encodeVarint(buf, pos, textBytes.length);
+    } else {
+      textBytes = toUtf8(text);
+      pos += encodeVarint(buf, pos, textBytes.length);
+    }
+    buf.set(textBytes, pos);
+    return pos + textBytes.length;
+  }
+
+  function encodeDuoMessages(buf, pos, entries, textEnc) {
+    const entryTypeBitmap = new Uint8Array(Math.ceil(entries.length / 8));
+    const chatSpeakers = [];
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i];
+      if (e.kind === "event") {
+        entryTypeBitmap[i >>> 3] |= 1 << (7 - (i & 7));
+      } else {
+        chatSpeakers.push(e.speaker);
+      }
+    }
+    buf.set(entryTypeBitmap, pos);
+    pos += entryTypeBitmap.length;
+    buf[pos++] = chatSpeakers.length > 0 ? chatSpeakers[0] : 0;
+    const turnBitmap = encodeTurnBitmap(chatSpeakers);
+    buf.set(turnBitmap, pos);
+    pos += turnBitmap.length;
+    for (const entry of entries) {
+      if (entry.kind === "event") {
+        buf[pos++] = ((entry.event & 0x0f) << 4) | (entry.participant & 0x0f);
+      } else {
+        pos = writeEncodedText(buf, pos, entry.text, textEnc);
+      }
+    }
+    return pos;
+  }
+
+  function encodeGroupMessages(buf, pos, entries, textEnc) {
+    for (const entry of entries) {
+      if (entry.kind === "event") {
+        pos += encodeVarint(buf, pos, 0);
+        buf[pos++] = ((entry.event & 0x0f) << 4) | (entry.participant & 0x0f);
+      } else {
+        pos += encodeVarint(buf, pos, entry.speaker + 1);
+        pos = writeEncodedText(buf, pos, entry.text, textEnc);
+      }
+    }
+    return pos;
+  }
+
+  function encodeRaw(conv, textEnc) {
+    const estimatedSize = 256 + conv.entries.length * 80;
+    const buf = new Uint8Array(estimatedSize);
+    let pos = 0;
+    const pCount = conv.participants.length;
+    const ppHint = pCount <= 3 ? pCount : 3;
+    buf[pos++] = ((conv.version & 0x03) << 6) | ((conv.mode & 0x03) << 4) | ((textEnc & 0x03) << 2) | ppHint;
+    if (ppHint === 3) pos += encodeVarint(buf, pos, pCount);
+    pos += encodeVarint(buf, pos, conv.entries.length);
+    for (const p of conv.participants) {
+      const nameBytes = toUtf8(p.name);
+      pos += encodeVarint(buf, pos, nameBytes.length);
+      buf.set(nameBytes, pos);
+      pos += nameBytes.length;
+    }
+    if (conv.mode === Mode.Duo) pos = encodeDuoMessages(buf, pos, conv.entries, textEnc);
+    else pos = encodeGroupMessages(buf, pos, conv.entries, textEnc);
+    return buf.slice(0, pos);
+  }
+
+  function encode(conv, opts = {}) {
+    const maxBytes = opts.maxBytes || QR_CAPACITY.L;
+    const textEnc = opts.textEncoding !== undefined ? opts.textEncoding : conv.textEncoding;
+    const result = encodeRaw(conv, textEnc);
+    if (result.length <= maxBytes) return result;
+    // Truncation: binary search for max entries that fit
+    let lo = 0, hi = conv.entries.length;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >>> 1;
+      const slice = { ...conv, entries: conv.entries.slice(conv.entries.length - mid) };
+      if (encodeRaw(slice, textEnc).length <= maxBytes) lo = mid;
+      else hi = mid - 1;
+    }
+    return encodeRaw({ ...conv, entries: conv.entries.slice(conv.entries.length - lo) }, textEnc);
+  }
+
+  // --- Codec: decode ---
+  function readEncodedText(data, pos, textEnc) {
+    if (textEnc === TextEncoding.SixBit) {
+      const [charCount, ccB] = decodeVarint(data, pos); pos += ccB;
+      const [byteLen, blB] = decodeVarint(data, pos); pos += blB;
+      return [decodeSixBit(data.slice(pos, pos + byteLen), charCount), pos + byteLen];
+    }
+    const [byteLen, blB] = decodeVarint(data, pos); pos += blB;
+    return [fromUtf8(data.slice(pos, pos + byteLen)), pos + byteLen];
+  }
+
+  function decodeDuoMessages(data, pos, entryCount, textEnc) {
+    const typeBitmapLen = Math.ceil(entryCount / 8);
+    const typeBitmap = data.slice(pos, pos + typeBitmapLen);
+    pos += typeBitmapLen;
+    let chatCount = 0;
+    for (let i = 0; i < entryCount; i++) {
+      if (!((typeBitmap[i >>> 3] >>> (7 - (i & 7))) & 1)) chatCount++;
+    }
+    const firstSpeaker = data[pos++];
+    const turnBitmapLen = Math.ceil(chatCount / 8);
+    const turnBitmap = data.slice(pos, pos + turnBitmapLen);
+    pos += turnBitmapLen;
+    const speakers = decodeTurnBitmap(turnBitmap, chatCount, firstSpeaker);
+    const entries = [];
+    let chatIdx = 0;
+    for (let i = 0; i < entryCount; i++) {
+      const isEvent = (typeBitmap[i >>> 3] >>> (7 - (i & 7))) & 1;
+      if (isEvent) {
+        const b = data[pos++];
+        entries.push({ kind: "event", event: (b >>> 4) & 0x0f, participant: b & 0x0f });
+      } else {
+        const speaker = speakers[chatIdx++];
+        let text; [text, pos] = readEncodedText(data, pos, textEnc);
+        entries.push({ kind: "message", speaker, text });
+      }
+    }
+    return [entries, pos];
+  }
+
+  function decodeGroupMessages(data, pos, entryCount, textEnc) {
+    const entries = [];
+    for (let i = 0; i < entryCount; i++) {
+      const [sp1, spB] = decodeVarint(data, pos); pos += spB;
+      if (sp1 === 0) {
+        const b = data[pos++];
+        entries.push({ kind: "event", event: (b >>> 4) & 0x0f, participant: b & 0x0f });
+      } else {
+        let text; [text, pos] = readEncodedText(data, pos, textEnc);
+        entries.push({ kind: "message", speaker: sp1 - 1, text });
+      }
+    }
+    return [entries, pos];
+  }
+
+  function decode(data) {
+    let pos = 0;
+    const h = data[pos++];
+    const version = (h >>> 6) & 0x03;
+    const mode = (h >>> 4) & 0x03;
+    const textEncoding = (h >>> 2) & 0x03;
+    const ppHint = h & 0x03;
+    let pCount;
+    if (ppHint < 3) { pCount = ppHint; }
+    else { const [v, n] = decodeVarint(data, pos); pCount = v; pos += n; }
+    const [msgCount, mcB] = decodeVarint(data, pos); pos += mcB;
+    const participants = [];
+    for (let i = 0; i < pCount; i++) {
+      const [nl, nlB] = decodeVarint(data, pos); pos += nlB;
+      participants.push({ name: fromUtf8(data.slice(pos, pos + nl)), active: true });
+      pos += nl;
+    }
+    let entries;
+    if (mode === Mode.Duo) [entries, pos] = decodeDuoMessages(data, pos, msgCount, textEncoding);
+    else [entries, pos] = decodeGroupMessages(data, pos, msgCount, textEncoding);
+    // Replay active status
+    for (const p of participants) p.active = false;
+    const seen = new Set();
+    for (const e of entries) {
+      if (e.kind === "event") {
+        if (e.event === EventType.Enter) { participants[e.participant].active = true; seen.add(e.participant); }
+        else participants[e.participant].active = false;
+      } else if (!seen.has(e.speaker)) { participants[e.speaker].active = true; seen.add(e.speaker); }
+    }
+    return { version, mode, textEncoding, participants, entries };
+  }
+
+  // --- High-level API ---
+  function create(name) {
+    return {
+      version: 1, mode: Mode.Duo, textEncoding: TextEncoding.Utf8,
+      participants: [{ name, active: true }],
+      entries: [{ kind: "event", event: EventType.Enter, participant: 0 }],
+    };
+  }
+
+  function join(conv, name) {
+    const existing = conv.participants.findIndex(p => p.name.toLowerCase() === name.toLowerCase());
+    if (existing >= 0) {
+      conv.participants[existing].active = true;
+      conv.entries.push({ kind: "event", event: EventType.Enter, participant: existing });
+      return existing;
+    }
+    const idx = conv.participants.length;
+    conv.participants.push({ name, active: true });
+    conv.entries.push({ kind: "event", event: EventType.Enter, participant: idx });
+    if (conv.participants.length > 2) conv.mode = Mode.Group;
+    return idx;
+  }
+
+  function addMessage(conv, speaker, text) {
+    conv.entries.push({ kind: "message", speaker, text });
+  }
+
+  function leave(conv, idx) {
+    conv.participants[idx].active = false;
+    conv.entries.push({ kind: "event", event: EventType.Exit, participant: idx });
+  }
+
+  function autoSelectEncoding(conv) {
+    const allText = conv.entries.filter(e => e.kind === "message").map(m => m.text).join("");
+    if (allText.length === 0) return TextEncoding.Utf8;
+    let compat = 0;
+    for (const ch of allText) { if (charToSixBit.has(ch)) compat++; }
+    return (compat / allText.length > 0.9) ? TextEncoding.SixBit : TextEncoding.Utf8;
+  }
+
+  function toBytes(conv, opts = {}) {
+    if (opts.textEncoding === undefined) conv.textEncoding = autoSelectEncoding(conv);
+    else conv.textEncoding = opts.textEncoding;
+    return encode(conv, opts);
+  }
+
+  function fromBytes(data) { return decode(data); }
+
+  return {
+    Mode, TextEncoding, EventType, QR_CAPACITY,
+    create, join, addMessage, leave, toBytes, fromBytes, encode, decode,
+  };
+})();
+
+// =====================================================================
+// Base64 helpers (binary ↔ QR-safe string)
+// =====================================================================
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+function base64ToBytes(b64) {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+// =====================================================================
+// App State
+// =====================================================================
+
+let currentConv = null;
+let myName = "";
+let myIndex = -1;
+let nameAction = "create"; // "create" or "join"
+let html5QrCode = null;
+
+// =====================================================================
+// Screen Navigation
+// =====================================================================
+
+function showScreen(name) {
+  document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
+  document.getElementById("screen-" + name).classList.add("active");
+}
+
+function showNameScreen(action) {
+  nameAction = action;
+  const titleEl = document.getElementById("name-screen-title");
+  const labelEl = document.getElementById("name-label");
+  if (action === "create") {
+    titleEl.textContent = "New Conversation";
+    labelEl.textContent = "Enter your display name";
+  } else {
+    titleEl.textContent = "Join Conversation";
+    labelEl.textContent = "Enter your name to join";
+  }
+  showScreen("name");
+  const inp = document.getElementById("name-input");
+  inp.value = myName; // remember previous name
+  setTimeout(() => inp.focus(), 100);
+}
+
+function confirmName() {
+  const name = document.getElementById("name-input").value.trim();
+  if (!name) { toast("Please enter a name"); return; }
+  myName = name;
+
+  if (nameAction === "create") {
+    currentConv = QNCP.create(myName);
+    myIndex = 0;
+    renderChat();
+    showScreen("chat");
+  } else {
+    // Joining an existing conversation
+    myIndex = QNCP.join(currentConv, myName);
+    renderChat();
+    showScreen("chat");
+  }
+}
+
+// =====================================================================
+// Chat Screen
+// =====================================================================
+
+function renderChat() {
+  if (!currentConv) return;
+  const body = document.getElementById("chat-body");
+  body.innerHTML = "";
+
+  // Header info
+  const activeNames = currentConv.participants.filter(p => p.active).map(p => p.name);
+  document.getElementById("chat-participants").textContent = activeNames.join(", ");
+  const msgCount = currentConv.entries.filter(e => e.kind === "message").length;
+  document.getElementById("chat-title").textContent = msgCount + " messages";
+
+  // Render entries
+  for (const entry of currentConv.entries) {
+    if (entry.kind === "event") {
+      const div = document.createElement("div");
+      div.className = "sys-event";
+      const pName = currentConv.participants[entry.participant].name;
+      div.textContent = entry.event === QNCP.EventType.Enter
+        ? `${pName} entered`
+        : `${pName} left`;
+      body.appendChild(div);
+    } else {
+      const div = document.createElement("div");
+      const isMine = entry.speaker === myIndex;
+      div.className = "msg " + (isMine ? "mine" : "theirs");
+
+      const senderDiv = document.createElement("div");
+      senderDiv.className = "sender";
+      senderDiv.textContent = currentConv.participants[entry.speaker].name;
+      div.appendChild(senderDiv);
+
+      const textNode = document.createTextNode(entry.text);
+      div.appendChild(textNode);
+      body.appendChild(div);
+    }
+  }
+
+  // Scroll to bottom
+  body.scrollTop = body.scrollHeight;
+}
+
+function sendMessage() {
+  const input = document.getElementById("chat-input");
+  const text = input.value.trim();
+  if (!text || !currentConv) return;
+
+  QNCP.addMessage(currentConv, myIndex, text);
+  input.value = "";
+  renderChat();
+}
+
+// =====================================================================
+// QR Display Screen
+// =====================================================================
+
+function showQR() {
+  if (!currentConv) return;
+
+  const bytes = QNCP.toBytes(currentConv);
+  const b64 = bytesToBase64(bytes);
+  const payload = "QNCP:" + b64;
+
+  const canvas = document.getElementById("qr-canvas");
+
+  // Use QRCode library to render
+  QRCode.toCanvas(canvas, payload, {
+    width: 280,
+    margin: 2,
+    color: { dark: "#e6edf3", light: "#0d1117" },
+    errorCorrectionLevel: "L",
+  }, (err) => {
+    if (err) { toast("QR generation failed: " + err.message); return; }
+  });
+
+  // Stats
+  const maxBytes = QNCP.QR_CAPACITY.L;
+  // Base64 overhead: payload is ~4/3 of binary, plus "QNCP:" prefix
+  const effectiveMax = Math.floor((maxBytes - 5) * 3 / 4); // binary bytes that fit
+  const usedPct = Math.round((bytes.length / effectiveMax) * 100);
+  const msgCount = currentConv.entries.filter(e => e.kind === "message").length;
+  const encName = currentConv.textEncoding === QNCP.TextEncoding.SixBit ? "6-bit" : "UTF-8";
+
+  document.getElementById("qr-stats").innerHTML =
+    `${bytes.length} bytes encoded (${encName})<br>` +
+    `${msgCount} messages, ${currentConv.participants.length} participants<br>` +
+    `${usedPct}% of QR capacity used`;
+
+  const fill = document.getElementById("capacity-fill");
+  fill.style.width = Math.min(usedPct, 100) + "%";
+  fill.className = "fill" + (usedPct > 90 ? " danger" : usedPct > 70 ? " warn" : "");
+
+  showScreen("qr");
+}
+
+function downloadQR() {
+  const canvas = document.getElementById("qr-canvas");
+  const link = document.createElement("a");
+  link.download = "qr-chat-" + Date.now() + ".png";
+  link.href = canvas.toDataURL("image/png");
+  link.click();
+}
+
+async function shareQR() {
+  const canvas = document.getElementById("qr-canvas");
+  try {
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/png"));
+    if (navigator.share && navigator.canShare) {
+      const file = new File([blob], "qr-chat.png", { type: "image/png" });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: "QR Chat" });
+        return;
+      }
+    }
+    // Fallback: copy to clipboard
+    await navigator.clipboard.write([
+      new ClipboardItem({ "image/png": blob })
+    ]);
+    toast("QR code copied to clipboard");
+  } catch (e) {
+    toast("Share not supported. Use Save Image.");
+  }
+}
+
+// =====================================================================
+// QR Scanner Screen
+// =====================================================================
+
+function showScanner() {
+  showScreen("scanner");
+  startScanner();
+}
+
+function startScanner() {
+  if (html5QrCode) return;
+  html5QrCode = new Html5Qrcode("scanner-region");
+  html5QrCode.start(
+    { facingMode: "environment" },
+    { fps: 10, qrbox: { width: 250, height: 250 } },
+    onQRScanned,
+    () => {} // ignore scan failures
+  ).catch(err => {
+    console.warn("Camera error:", err);
+    toast("Camera not available. Upload an image instead.");
+  });
+}
+
+function stopScanner() {
+  if (html5QrCode) {
+    html5QrCode.stop().catch(() => {});
+    html5QrCode.clear();
+    html5QrCode = null;
+  }
+}
+
+function onQRScanned(text) {
+  stopScanner();
+  processQRPayload(text);
+}
+
+function handleFileUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  // Use Html5Qrcode to scan from file
+  const tempScanner = new Html5Qrcode("scanner-region");
+  tempScanner.scanFile(file, true)
+    .then(text => {
+      tempScanner.clear();
+      stopScanner();
+      processQRPayload(text);
+    })
+    .catch(err => {
+      tempScanner.clear();
+      toast("Could not read QR code from image");
+    });
+
+  // Reset input so the same file can be re-selected
+  event.target.value = "";
+}
+
+function processQRPayload(text) {
+  try {
+    if (!text.startsWith("QNCP:")) {
+      toast("Not a QR Chat code");
+      showScreen("home");
+      return;
+    }
+    const b64 = text.slice(5);
+    const bytes = base64ToBytes(b64);
+    currentConv = QNCP.fromBytes(bytes);
+
+    // Show name screen for joining
+    showNameScreen("join");
+  } catch (e) {
+    console.error("Decode error:", e);
+    toast("Invalid QR Chat data");
+    showScreen("home");
+  }
+}
+
+// =====================================================================
+// Toast
+// =====================================================================
+
+let toastTimer = null;
+function toast(msg) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 2500);
+}
+</script>
+</body>
+</html>
