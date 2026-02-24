@@ -1431,13 +1431,16 @@ const ai2 = new AgentLoop({
   "description": "Universal LLM API — one interface, every provider",
   "type": "module",
   "exports": {
-    ".": { "import": "./dist/index.js", "require": "./dist/index.cjs", "types": "./dist/index.d.ts" },
-    "./middleware": { "import": "./dist/middleware.js", "types": "./dist/middleware.d.ts" }
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js", "require": "./dist/index.cjs" },
+    "./middleware": { "types": "./dist/middleware.d.ts", "import": "./dist/middleware.js" }
   },
   "files": ["dist"],
   "scripts": {
     "build": "tsup",
     "test": "vitest",
+    "test:ci": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
@@ -1447,15 +1450,21 @@ const ai2 = new AgentLoop({
     "zod": { "optional": true }
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "^2.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.5.0",
     "vitest": "^2.0.0",
     "zod": "^3.23.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
 ```
 
 **Key: zero runtime dependencies.** Uses native `fetch()` (Node 18+). Zod is optional peer dep only needed for `chatStructured()`.
+
+See [TESTING.md](./TESTING.md) for full testing strategy, coverage thresholds, and integration test documentation.
 
 ---
 
