@@ -196,31 +196,45 @@ This maps cleanly from all providers:
 
 ## Architecture: Minimal Code, Maximum Coverage
 
-### Project Structure (16 files, ~1400 lines)
+### Project Structure
+
+> Items marked ✅ are implemented. Others are planned for Phases 1–3.
 
 ```
 agentloop/
 ├── src/
-│   ├── index.ts                    # Public barrel export (~30 lines)
-│   ├── types.ts                    # All types — discriminated unions (~200 lines)
+│   ├── index.ts                    # Public barrel export                    ✅ (stub)
+│   ├── types.ts                    # Type system — ResponsePart, Citation, Usage ✅
 │   ├── client.ts                   # AgentLoop class — routing + middleware (~120 lines)
 │   ├── provider.ts                 # OpenAI-compatible provider — fetch + SSE (~150 lines)
-│   ├── normalize.ts                # Response normalization — all OpenAI-compat quirks (~150 lines)
+│   ├── normalize.ts                # Response normalization — all quirks (~150 lines)
 │   ├── registry.ts                 # Provider config table + param filters (~80 lines)
 │   ├── transforms/
 │   │   ├── anthropic.ts            # Anthropic ↔ unified transforms (~220 lines)
 │   │   └── google.ts              # Gemini ↔ unified transforms (~250 lines)
 │   ├── middleware.ts               # compose() + retry/fallback/cache/logger (~120 lines)
 │   └── errors.ts                   # Unified error hierarchy (~50 lines)
-├── tests/
-│   ├── normalize.test.ts           # Response normalization tests (all quirks)
-│   ├── provider.test.ts
-│   ├── transforms.test.ts
-│   ├── middleware.test.ts
-│   └── client.test.ts
-├── package.json
-├── tsconfig.json
-└── tsup.config.ts
+├── tests/                                                                    ✅
+│   ├── normalize.test.ts           # Response normalization tests (17 todo)  ✅
+│   ├── provider.test.ts            # Provider dispatch tests (14 todo)       ✅
+│   ├── transforms.test.ts          # Anthropic/Gemini transform tests (29 todo) ✅
+│   ├── middleware.test.ts          # Middleware tests (19 todo)               ✅
+│   ├── client.test.ts             # Client API tests (16 todo)               ✅
+│   ├── fixtures/                   # JSON fixtures for provider responses    ✅ (empty)
+│   └── integration/                                                          ✅
+│       ├── anthropic-api.ts        # Minimal Anthropic client (native fetch) ✅
+│       └── anthropic.test.ts       # 30 tests against real Anthropic API     ✅
+├── .github/workflows/ci.yml       # CI: typecheck + test + build (Node 18/20/22) ✅
+├── .gitignore                                                                ✅
+├── package.json                                                              ✅
+├── tsconfig.json                   # ES2022, NodeNext, strict                ✅
+├── tsup.config.ts                  # ESM + CJS dual build, node18 target     ✅
+├── vitest.config.ts                # Unit test config (excludes integration) ✅
+├── vitest.integration.config.ts    # Integration test config (30s timeout)   ✅
+├── README.md                                                                 ✅
+├── TESTING.md                      # Testing strategy & guide                ✅
+├── SPEC.md
+└── PLAN.md
 ```
 
 ### Code Reuse Breakdown
@@ -304,10 +318,32 @@ Zero per-provider code. Pure config.
 
 **Delivers:** Production-ready SDK with middleware.
 
-### Phase 4: Polish + Tests
-- `index.ts` — barrel export
-- `normalize.test.ts` — test all provider quirks (eos, string index, parsed args, etc.)
-- Other tests, build config, package.json
+### Phase 4: Polish + Tests ✅ (testing infrastructure complete)
+
+Testing infrastructure is fully set up. Remaining work is filling in the `it.todo()` test cases
+as Phases 1–3 modules are implemented.
+
+**Completed:**
+- `package.json` — scripts: `test`, `test:ci`, `test:coverage`, `test:integration`, `typecheck`, `build`
+- `tsconfig.json` — ES2022/NodeNext, strict mode
+- `vitest.config.ts` — unit tests with v8 coverage (80% thresholds)
+- `vitest.integration.config.ts` — integration tests (30s timeout)
+- `tsup.config.ts` — ESM + CJS dual build
+- `.github/workflows/ci.yml` — CI pipeline on Node 18/20/22
+- 5 unit test files with 95 scaffolded `it.todo()` test cases
+- 30 passing integration tests against real Anthropic Messages API
+- `index.ts` — barrel export (stub)
+- `types.ts` — full `ResponsePart` union, `Citation` types, `Usage` types
+- `README.md`, `TESTING.md` — project and testing documentation
+
+**Remaining (fill in as code is written):**
+- `normalize.test.ts` — implement 17 todo tests once `normalize.ts` exists
+- `provider.test.ts` — implement 14 todo tests once `provider.ts` exists
+- `transforms.test.ts` — implement 29 todo tests once transforms exist
+- `middleware.test.ts` — implement 19 todo tests once `middleware.ts` exists
+- `client.test.ts` — implement 16 todo tests once `client.ts` exists
+- `tests/fixtures/` — add JSON fixtures captured from real provider responses
+- Integration tests for other providers (Google, OpenAI, etc.)
 
 ---
 
