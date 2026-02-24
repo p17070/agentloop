@@ -88,11 +88,12 @@ export const MODEL_CATALOG: ModelInfo[] = [
   // ── OpenAI ──────────────────────────────────────────────────────────────
 
   // GPT-5 series
+  { id: "gpt-5.2", name: "GPT-5.2", provider: "openai", categories: ["flagship"], contextWindow: 128_000, maxOutputTokens: 16_384, isDefault: true },
   { id: "gpt-5", name: "GPT-5", provider: "openai", categories: ["flagship"], contextWindow: 128_000, maxOutputTokens: 16_384 },
   { id: "gpt-5-mini", name: "GPT-5 Mini", provider: "openai", categories: ["fast"], contextWindow: 128_000, maxOutputTokens: 16_384 },
 
   // GPT-4.1 series
-  { id: "gpt-4.1", name: "GPT-4.1", provider: "openai", categories: ["flagship", "code"], contextWindow: 1_000_000, maxOutputTokens: 32_768, isDefault: true },
+  { id: "gpt-4.1", name: "GPT-4.1", provider: "openai", categories: ["flagship", "code"], contextWindow: 1_000_000, maxOutputTokens: 32_768 },
   { id: "gpt-4.1-mini", name: "GPT-4.1 Mini", provider: "openai", categories: ["fast"], contextWindow: 1_000_000, maxOutputTokens: 32_768 },
   { id: "gpt-4.1-nano", name: "GPT-4.1 Nano", provider: "openai", categories: ["fast"], contextWindow: 1_000_000, maxOutputTokens: 32_768 },
 
@@ -111,8 +112,8 @@ export const MODEL_CATALOG: ModelInfo[] = [
   // ── Anthropic ───────────────────────────────────────────────────────────
 
   // Claude 4.6
-  { id: "claude-opus-4-6", name: "Claude Opus 4.6", provider: "anthropic", categories: ["flagship", "code", "reasoning"], contextWindow: 200_000, maxOutputTokens: 32_000 },
-  { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", provider: "anthropic", categories: ["flagship", "code"], contextWindow: 200_000, maxOutputTokens: 16_000, isDefault: true },
+  { id: "claude-opus-4-6", name: "Claude Opus 4.6", provider: "anthropic", categories: ["flagship", "code", "reasoning"], contextWindow: 200_000, maxOutputTokens: 128_000 },
+  { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", provider: "anthropic", categories: ["flagship", "code"], contextWindow: 200_000, maxOutputTokens: 64_000, isDefault: true },
 
   // Claude 4.5
   { id: "claude-opus-4-5-20251101", name: "Claude Opus 4.5", provider: "anthropic", categories: ["flagship", "code"], contextWindow: 200_000, maxOutputTokens: 32_000 },
@@ -126,6 +127,10 @@ export const MODEL_CATALOG: ModelInfo[] = [
   { id: "claude-3-5-haiku-20241022", name: "Claude 3.5 Haiku", provider: "anthropic", categories: ["fast"], contextWindow: 200_000, maxOutputTokens: 8_192 },
 
   // ── Google Gemini ───────────────────────────────────────────────────────
+
+  // Gemini 3.x (preview)
+  { id: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro (Preview)", provider: "google", categories: ["flagship", "reasoning", "code"], contextWindow: 1_000_000, maxOutputTokens: 65_536 },
+  { id: "gemini-3-flash-preview", name: "Gemini 3 Flash (Preview)", provider: "google", categories: ["fast", "reasoning", "vision"], contextWindow: 1_000_000, maxOutputTokens: 65_536 },
 
   // Gemini 2.5 (stable / GA)
   { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", provider: "google", categories: ["flagship", "reasoning", "code"], contextWindow: 1_000_000, maxOutputTokens: 65_536, isDefault: true },
@@ -152,11 +157,15 @@ export const MODEL_CATALOG: ModelInfo[] = [
   // DeepSeek on Groq
   { id: "deepseek-r1-distill-llama-70b", name: "DeepSeek R1 Distill 70B", provider: "groq", categories: ["reasoning"], contextWindow: 128_000 },
 
+  // OpenAI open-weight on Groq
+  { id: "openai/gpt-oss-120b", name: "GPT-OSS 120B", provider: "groq", categories: ["flagship"], contextWindow: 128_000 },
+
   // ── Together AI ─────────────────────────────────────────────────────────
 
   // DeepSeek on Together
   { id: "deepseek-ai/DeepSeek-R1", name: "DeepSeek R1", provider: "together", categories: ["reasoning"], contextWindow: 128_000 },
   { id: "deepseek-ai/DeepSeek-V3.1", name: "DeepSeek V3.1", provider: "together", categories: ["flagship"], contextWindow: 128_000 },
+  { id: "DeepSeek-AI/DeepSeek-V3-2-Exp", name: "DeepSeek V3.2 Exp", provider: "together", categories: ["flagship"], contextWindow: 128_000 },
 
   // Llama on Together
   { id: "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8", name: "Llama 4 Maverick", provider: "together", categories: ["flagship"], contextWindow: 128_000 },
@@ -238,16 +247,26 @@ export const MODEL_CATALOG: ModelInfo[] = [
   { id: "grok-4-1-fast-reasoning", name: "Grok 4.1 Fast Reasoning", provider: "xai", categories: ["flagship", "reasoning"], contextWindow: 2_000_000 },
   { id: "grok-4-1-fast-non-reasoning", name: "Grok 4.1 Fast", provider: "xai", categories: ["flagship", "fast"], contextWindow: 2_000_000, isDefault: true },
 
+  // Grok 4 (always-reasoning)
+  { id: "grok-4", name: "Grok 4", provider: "xai", categories: ["flagship", "reasoning"], contextWindow: 256_000 },
+
   // Grok 3
   { id: "grok-3-beta", name: "Grok 3", provider: "xai", categories: ["flagship"], contextWindow: 131_000 },
   { id: "grok-3-mini-beta", name: "Grok 3 Mini", provider: "xai", categories: ["fast", "reasoning"], contextWindow: 131_000 },
+  { id: "grok-3-fast-beta", name: "Grok 3 Fast", provider: "xai", categories: ["fast"], contextWindow: 131_000 },
+
+  // Grok 2 (legacy)
+  { id: "grok-2-1212", name: "Grok 2", provider: "xai", categories: ["flagship"], contextWindow: 131_000 },
+  { id: "grok-2-vision-1212", name: "Grok 2 Vision", provider: "xai", categories: ["vision"], contextWindow: 131_000 },
 
   // Code
   { id: "grok-code-fast-1", name: "Grok Code", provider: "xai", categories: ["code"], contextWindow: 256_000 },
 
   // ── Ollama (local) ──────────────────────────────────────────────────────
 
-  { id: "llama3.3", name: "Llama 3.3 70B", provider: "ollama", categories: ["flagship"], contextWindow: 128_000, isDefault: true },
+  { id: "llama4:scout", name: "Llama 4 Scout", provider: "ollama", categories: ["flagship", "vision"], contextWindow: 128_000, isDefault: true },
+  { id: "llama4:maverick", name: "Llama 4 Maverick", provider: "ollama", categories: ["flagship"], contextWindow: 128_000 },
+  { id: "llama3.3", name: "Llama 3.3 70B", provider: "ollama", categories: ["flagship"], contextWindow: 128_000 },
   { id: "llama3.2", name: "Llama 3.2 3B", provider: "ollama", categories: ["fast"], contextWindow: 128_000 },
   { id: "qwen3", name: "Qwen 3", provider: "ollama", categories: ["flagship", "reasoning"], contextWindow: 128_000 },
   { id: "deepseek-r1", name: "DeepSeek R1", provider: "ollama", categories: ["reasoning"], contextWindow: 128_000 },
