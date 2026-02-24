@@ -605,6 +605,10 @@ function buildOpenAIRequest(provider, baseURL, model, apiKey, messages, opts) {
       if (m.role === "tool" && m.tool_call_id) {
         return { role: "tool", tool_call_id: m.tool_call_id, content: m.content };
       }
+      // Handle multimodal content (array of parts)
+      if (Array.isArray(m.content)) {
+        return { role: m.role, content: convertPartsForOpenAI(m.content) };
+      }
       return { role: m.role, content: m.content };
     }),
   };
@@ -646,8 +650,15 @@ function buildAnthropicRequest(baseURL, model, apiKey, messages, opts) {
   const converted = [];
   for (const msg of nonSystem) {
     const role = msg.role === "tool" ? "user" : (msg.role === "assistant" ? "assistant" : "user");
-    // If content is already an array (structured: tool_use or tool_result blocks), keep as-is
-    const content = Array.isArray(msg.content) ? msg.content : msg.content;
+    // Convert multimodal content parts to Anthropic format
+    let content;
+    if (Array.isArray(msg.content) && msg.content.length > 0 && msg.content[0]?.type) {
+      // Check if these are generic content parts (image_url, file, text from our upload system)
+      const hasGenericParts = msg.content.some(p => p.type === "image_url" || p.type === "file");
+      content = hasGenericParts ? convertPartsForAnthropic(msg.content) : msg.content;
+    } else {
+      content = msg.content;
+    }
     const last = converted[converted.length - 1];
 
     if (last && last.role === role) {
@@ -707,6 +718,10 @@ function buildGeminiRequest(baseURL, model, apiKey, messages, opts) {
     if (msg._isGeminiToolCall || msg._isGeminiToolResult) {
       return { role, parts: msg.content };
     }
+    // Handle multimodal content parts
+    if (Array.isArray(msg.content) && msg.content.length > 0 && msg.content[0]?.type) {
+      return { role, parts: convertPartsForGemini(msg.content) };
+    }
     return { role, parts: [{ text: msg.content || "" }] };
   });
 
@@ -726,6 +741,97 @@ function buildGeminiRequest(baseURL, model, apiKey, messages, opts) {
   }
 
   return { url, headers, body };
+}
+
+// ─── Multimodal Content Part Converters ──────────────────────────────────────
+
+/**
+ * Convert generic content parts to OpenAI format.
+ * OpenAI supports: { type: "text", text }, { type: "image_url", image_url: { url, detail } }
+ * PDFs and other files: extract data and send as image_url for vision models, or as text fallback.
+ */
+function convertPartsForOpenAI(parts) {
+  return parts.map(p => {
+    if (p.type === "text") return { type: "text", text: p.text };
+    if (p.type === "image_url") return { type: "image_url", image_url: { url: p.image_url.url, detail: p.image_url.detail || "auto" } };
+    if (p.type === "file") {
+      // OpenAI file input: use the input_file format for PDFs/documents
+      const dataUrl = p.file.data;
+      // If it's a data URL with a PDF mimetype, send as file input
+      if (dataUrl && dataUrl.startsWith("data:application/pdf")) {
+        return { type: "file", file: { filename: p.file.filename, file_data: dataUrl } };
+      }
+      // Fallback: treat as text
+      return { type: "text", text: `[File: ${p.file.filename}]\n${dataUrl}` };
+    }
+    return p;
+  });
+}
+
+/**
+ * Convert generic content parts to Anthropic format.
+ * Anthropic supports: { type: "text", text }, { type: "image", source: { type, media_type, data } },
+ * and { type: "document", source: { type: "base64", media_type, data } } for PDFs.
+ */
+function convertPartsForAnthropic(parts) {
+  return parts.map(p => {
+    if (p.type === "text") return { type: "text", text: p.text };
+    if (p.type === "image_url") {
+      const url = p.image_url.url;
+      // If it's a data URL, extract the base64 and media type
+      if (url.startsWith("data:")) {
+        const match = url.match(/^data:([^;]+);base64,(.+)$/);
+        if (match) {
+          return { type: "image", source: { type: "base64", media_type: match[1], data: match[2] } };
+        }
+      }
+      // URL-based image
+      return { type: "image", source: { type: "url", url } };
+    }
+    if (p.type === "file") {
+      const dataUrl = p.file.data;
+      if (dataUrl && dataUrl.startsWith("data:")) {
+        const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+        if (match) {
+          // Anthropic supports PDFs as document type
+          if (match[1] === "application/pdf") {
+            return { type: "document", source: { type: "base64", media_type: match[1], data: match[2] } };
+          }
+          return { type: "image", source: { type: "base64", media_type: match[1], data: match[2] } };
+        }
+      }
+      return { type: "text", text: `[File: ${p.file.filename}]\n${dataUrl}` };
+    }
+    return p;
+  });
+}
+
+/**
+ * Convert generic content parts to Gemini format.
+ * Gemini supports: { text }, { inlineData: { mimeType, data } }
+ */
+function convertPartsForGemini(parts) {
+  return parts.map(p => {
+    if (p.type === "text") return { text: p.text };
+    if (p.type === "image_url") {
+      const url = p.image_url.url;
+      if (url.startsWith("data:")) {
+        const match = url.match(/^data:([^;]+);base64,(.+)$/);
+        if (match) return { inlineData: { mimeType: match[1], data: match[2] } };
+      }
+      // Gemini also supports fileData with URL but we'll use inlineData
+      return { text: `[Image: ${url}]` };
+    }
+    if (p.type === "file") {
+      const dataUrl = p.file.data;
+      if (dataUrl && dataUrl.startsWith("data:")) {
+        const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+        if (match) return { inlineData: { mimeType: match[1], data: match[2] } };
+      }
+      return { text: `[File: ${p.file.filename}]\n${dataUrl}` };
+    }
+    return { text: JSON.stringify(p) };
+  });
 }
 
 // ─── API Key Management ─────────────────────────────────────────────────────
