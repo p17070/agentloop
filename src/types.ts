@@ -1,11 +1,89 @@
 // AgentLoop — Type System
-// Placeholder — full type definitions will be added in Phase 1
+
+// ─── Roles & Finish Reasons ──────────────────────────────────────────────────
 
 /** Canonical role type across all providers */
 export type Role = "system" | "user" | "assistant" | "tool";
 
 /** Normalized finish reason (all 30+ provider values map to one of these) */
 export type FinishReason = "stop" | "length" | "tool_calls" | "content_filter" | "error";
+
+// ─── Request Types ───────────────────────────────────────────────────────────
+
+/**
+ * Cache control hint for provider-native prompt caching.
+ *
+ * - Anthropic: maps to `cache_control: { type: "ephemeral" }` on content blocks,
+ *   system blocks, and tool definitions. Content up to the marked block is cached.
+ * - OpenAI: ignored (caching is automatic based on prefix matching).
+ * - Gemini: ignored (uses separate `cachedContents` API not yet supported).
+ * - All other providers: stripped silently.
+ */
+export type CacheControl = "ephemeral";
+
+/** Input content part (text, image, audio) in a ChatMessage */
+export type ContentPart =
+  | TextContentPart
+  | ImageContentPart
+  | AudioContentPart;
+
+export interface TextContentPart {
+  type: "text";
+  text: string;
+  cache?: CacheControl;
+}
+
+export interface ImageContentPart {
+  type: "image_url";
+  image_url: { url: string; detail?: "auto" | "low" | "high" };
+  cache?: CacheControl;
+}
+
+export interface AudioContentPart {
+  type: "input_audio";
+  input_audio: { data: string; format: "wav" | "mp3" };
+  cache?: CacheControl;
+}
+
+export interface ChatMessage {
+  role: Role;
+  content: string | ContentPart[] | null;
+  name?: string;
+  tool_calls?: ToolCall[];
+  tool_call_id?: string;
+  /**
+   * Cache control hint — marks this message as a cache breakpoint.
+   * For Anthropic: applied to the last content block in this message.
+   * When `content` is a string, it is converted to a single text block with cache_control.
+   */
+  cache?: CacheControl;
+}
+
+export interface ToolDefinition {
+  type: "function";
+  function: {
+    name: string;
+    description?: string;
+    parameters?: Record<string, unknown>;
+    strict?: boolean;
+  };
+  /**
+   * Cache control hint — marks this tool definition as a cache breakpoint.
+   * For Anthropic: sets `cache_control: { type: "ephemeral" }` on this tool.
+   */
+  cache?: CacheControl;
+}
+
+export interface ToolCall {
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
+// ─── Response Types ──────────────────────────────────────────────────────────
 
 /** Discriminated union for response content parts */
 export type ResponsePart =
@@ -82,6 +160,8 @@ export interface ServerToolResultPart {
   content: unknown;
 }
 
+// ─── Citations ───────────────────────────────────────────────────────────────
+
 /** Unified citation types */
 export type Citation = UrlCitation | DocumentCitation | CharLocationCitation;
 
@@ -109,6 +189,8 @@ export interface CharLocationCitation {
   endCharIndex: number;
 }
 
+// ─── Usage ───────────────────────────────────────────────────────────────────
+
 /** Normalized usage information */
 export interface Usage {
   promptTokens: number;
@@ -119,7 +201,10 @@ export interface Usage {
 
 export interface UsageDetails {
   reasoningTokens?: number;
+  /** Tokens read from cache (Anthropic cache_read, OpenAI cached_tokens, DeepSeek cache_hit, Gemini cachedContentTokenCount) */
   cachedTokens?: number;
+  /** Tokens written to cache (Anthropic cache_creation_input_tokens) */
+  cacheWriteTokens?: number;
   audioTokens?: number;
   completionTokensByModality?: Record<string, number>;
 }

@@ -137,7 +137,7 @@ Tests all provider-specific quirks discovered during API research:
 
 Integration tests call real provider APIs to validate that actual response shapes match the SPEC. They are **excluded from the default test run** and require API keys.
 
-### Anthropic Integration Tests (30 tests)
+### Anthropic Integration Tests (35 tests)
 
 Tests are in `tests/integration/anthropic.test.ts` and use a minimal API client in `tests/integration/anthropic-api.ts` (native `fetch()`, no SDK dependency).
 
@@ -152,10 +152,28 @@ Tests are in `tests/integration/anthropic.test.ts` and use a minimal API client 
 | Error handling | 2 | Invalid model error, invalid API key 401/403 |
 | Multi-turn | 1 | Context preserved across conversation turns |
 | System message | 1 | Top-level `system` parameter respected |
+| Prompt caching | 5 | System block with `cache_control`, `cache_creation_input_tokens` on write, `cache_read_input_tokens` on hit, `cache_control` on user content blocks, `cache_control` on tool definitions |
+
+### Gemini Integration Tests (28 tests)
+
+Tests are in `tests/integration/gemini.test.ts` and use a minimal API client in `tests/integration/gemini-api.ts` (native `fetch()`, no SDK dependency).
+
+| Suite | Tests | What's Validated |
+|---|---|---|
+| Basic chat | 8 | `candidates[]` array, `role: "model"`, text parts, `finishReason: "STOP"`, `usageMetadata` with `promptTokenCount`/`candidatesTokenCount`/`totalTokenCount`, total = prompt + candidates |
+| Tool calling | 5 | `functionCall` parts, `name` and `args` (parsed object), JSON.stringify round-trip, finishReason behavior |
+| Tool result round-trip | 2 | Multi-turn with `functionResponse` part (matched by name), model incorporates result |
+| Streaming | 6 | Full `GenerateContentResponse` per chunk (not deltas), text parts in chunks, text concatenation, `usageMetadata` in last chunk, `finishReason` in final chunk |
+| Streaming tool calls | 2 | `functionCall` in stream chunks, `name` and `args` present |
+| MAX_TOKENS finish | 1 | `finishReason: "MAX_TOKENS"` on truncation |
+| Error handling | 2 | Invalid model error, invalid API key error |
+| Multi-turn | 1 | Context preserved across conversation turns |
+| System instruction | 1 | Top-level `systemInstruction` parameter respected |
+| JSON mode | 1 | `responseMimeType: "application/json"` returns parseable JSON |
 
 ### Adding Integration Tests for Other Providers
 
-Follow the pattern established by the Anthropic tests:
+Follow the pattern established by the Anthropic and Gemini tests:
 
 1. Create `tests/integration/<provider>-api.ts` — minimal API client using native `fetch()`
 2. Create `tests/integration/<provider>.test.ts` — tests that validate response shapes

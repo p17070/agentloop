@@ -22,6 +22,7 @@ npm run build             # Build ESM + CJS to dist/ (tsup)
 Integration tests require environment variables:
 ```bash
 ANTHROPIC_API_KEY=sk-ant-... npm run test:integration
+GEMINI_API_KEY=AIza...       npm run test:integration
 ```
 
 ## Architecture
@@ -31,6 +32,7 @@ ANTHROPIC_API_KEY=sk-ant-... npm run test:integration
 - A parameter filter layer (strip/rename/clamp/defaults) handles provider differences
 - All responses normalized to `ResponsePart[]` — a 10-variant discriminated union
 - Streaming uses content-part lifecycle events: `content.start → content.delta → content.done`
+- Provider-native prompt caching via `cache: "ephemeral"` on `ContentPart`, `ChatMessage`, and `ToolDefinition` (Anthropic; no-op for others)
 
 ## Key Files
 
@@ -58,7 +60,9 @@ tests/                       # Unit tests (vitest)
   fixtures/                  # JSON fixtures for provider responses (empty, planned)
   integration/               # Integration tests against real APIs
     anthropic-api.ts         # Minimal Anthropic client (native fetch)
-    anthropic.test.ts        # 30 passing tests against real Anthropic API
+    anthropic.test.ts        # 30 tests against real Anthropic API
+    gemini-api.ts            # Minimal Gemini client (native fetch)
+    gemini.test.ts           # 28 tests against real Gemini API
 .github/workflows/ci.yml    # CI: typecheck → test → build on Node 18/20/22
 ```
 
@@ -94,6 +98,13 @@ tests/                       # Unit tests (vitest)
 - Anthropic uses `x-api-key` header, NOT `Authorization: Bearer`. Also requires `anthropic-version: 2023-06-01` header.
 - Anthropic `tool_use.input` is a parsed object — must `JSON.stringify()` for the unified `ToolCallPart.arguments` string.
 - Anthropic endpoint is `/v1/messages`, NOT `/v1/chat/completions`.
+- Anthropic prompt caching: `cache_control: { type: "ephemeral" }` goes on content blocks, system blocks, and tool definitions. System must be array-of-blocks (not string) when using cache. Min ~1024 tokens for caching to activate. Response reports `cache_creation_input_tokens` (write) and `cache_read_input_tokens` (hit).
+- Gemini uses `x-goog-api-key` header (not Bearer). Endpoint is `/models/{model}:generateContent`.
+- Gemini `functionCall.args` is a parsed object — must `JSON.stringify()` for `ToolCallPart.arguments`.
+- Gemini tool results use `functionResponse` matched by **name** (not ID like other providers).
+- Gemini streams full `GenerateContentResponse` per SSE chunk (not incremental deltas).
+- Gemini returns `finishReason: "STOP"` even for tool calls — the SDK must override to `"tool_calls"` when `functionCall` parts are present.
+- Gemini schema types are UPPERCASE strings (`"STRING"`, `"OBJECT"`, etc.), not lowercase.
 - Fireworks `function.arguments` can be an object instead of string — coerce with `JSON.stringify()`.
 - Mistral `choices[].index` can be a string — coerce with `Number()`.
 - Together AI returns `finish_reason: "eos"` — map to `"stop"`.
