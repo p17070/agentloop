@@ -336,6 +336,47 @@ function setApiKey(provider, key) {
 // ─── Stream Parsers ─────────────────────────────────────────────────────────
 
 /**
+ * Normalize raw usage from any provider into a unified shape:
+ * { input_tokens, output_tokens, cached_tokens, cache_write_tokens, reasoning_tokens }
+ * All fields are numbers (0 if absent).
+ */
+function normalizeUsage(provider, raw) {
+  if (!raw) return null;
+  const entry = PROVIDERS[provider];
+
+  if (entry.transform === "anthropic") {
+    return {
+      input_tokens: raw.input_tokens || 0,
+      output_tokens: raw.output_tokens || 0,
+      cached_tokens: raw.cache_read_input_tokens || 0,
+      cache_write_tokens: raw.cache_creation_input_tokens || 0,
+      reasoning_tokens: 0,
+    };
+  }
+
+  if (entry.transform === "google") {
+    return {
+      input_tokens: raw.promptTokenCount || 0,
+      output_tokens: raw.candidatesTokenCount || 0,
+      cached_tokens: raw.cachedContentTokenCount || 0,
+      cache_write_tokens: 0,
+      reasoning_tokens: raw.thoughtsTokenCount || 0,
+    };
+  }
+
+  // OpenAI-compatible
+  const cached = raw.prompt_tokens_details?.cached_tokens || 0;
+  const reasoning = raw.completion_tokens_details?.reasoning_tokens || 0;
+  return {
+    input_tokens: raw.prompt_tokens || 0,
+    output_tokens: raw.completion_tokens || 0,
+    cached_tokens: cached,
+    cache_write_tokens: 0,
+    reasoning_tokens: reasoning,
+  };
+}
+
+/**
  * Parse an OpenAI-compatible SSE stream.
  * Yields text deltas as they arrive.
  */
@@ -366,9 +407,13 @@ async function* parseOpenAIStream(reader) {
         if (data.choices?.[0]?.finish_reason) {
           yield { type: "finish", reason: data.choices[0].finish_reason };
         }
-        // Usage info
+        // Usage info (full object for downstream normalization)
         if (data.usage) {
           yield { type: "usage", usage: data.usage };
+        }
+        // Groq nests usage in x_groq.usage
+        if (data.x_groq?.usage) {
+          yield { type: "usage", usage: data.x_groq.usage };
         }
       } catch {
         // Skip unparseable chunks
@@ -415,7 +460,15 @@ async function* parseAnthropicStream(reader) {
             break;
           case "message_start":
             if (data.message?.usage) {
-              yield { type: "usage", usage: { input_tokens: data.message.usage.input_tokens } };
+              // Anthropic sends cache stats on message_start
+              yield {
+                type: "usage",
+                usage: {
+                  input_tokens: data.message.usage.input_tokens,
+                  cache_read_input_tokens: data.message.usage.cache_read_input_tokens || 0,
+                  cache_creation_input_tokens: data.message.usage.cache_creation_input_tokens || 0,
+                },
+              };
             }
             break;
           case "error":
@@ -466,15 +519,9 @@ async function* parseGeminiStream(reader) {
           yield { type: "finish", reason: reason === "STOP" ? "stop" : reason.toLowerCase() };
         }
 
-        // Usage
+        // Usage — pass full usageMetadata for normalization
         if (data.usageMetadata) {
-          yield {
-            type: "usage",
-            usage: {
-              input_tokens: data.usageMetadata.promptTokenCount,
-              output_tokens: data.usageMetadata.candidatesTokenCount,
-            },
-          };
+          yield { type: "usage", usage: data.usageMetadata };
         }
       } catch {
         // Skip unparseable chunks
@@ -495,7 +542,7 @@ function getStreamParser(provider) {
 
 /**
  * Parse a non-streaming response from any provider.
- * Returns { text, usage }.
+ * Returns { text, usage } with normalized usage.
  */
 function parseResponse(provider, data) {
   const entry = PROVIDERS[provider];
@@ -507,9 +554,7 @@ function parseResponse(provider, data) {
       .join("");
     return {
       text,
-      usage: data.usage
-        ? { input_tokens: data.usage.input_tokens, output_tokens: data.usage.output_tokens }
-        : null,
+      usage: normalizeUsage(provider, data.usage),
     };
   }
 
@@ -518,9 +563,7 @@ function parseResponse(provider, data) {
     const text = parts.map(p => p.text || "").join("");
     return {
       text,
-      usage: data.usageMetadata
-        ? { input_tokens: data.usageMetadata.promptTokenCount, output_tokens: data.usageMetadata.candidatesTokenCount }
-        : null,
+      usage: normalizeUsage(provider, data.usageMetadata),
     };
   }
 
@@ -528,8 +571,6 @@ function parseResponse(provider, data) {
   const text = data.choices?.[0]?.message?.content || "";
   return {
     text,
-    usage: data.usage
-      ? { input_tokens: data.usage.prompt_tokens, output_tokens: data.usage.completion_tokens }
-      : null,
+    usage: normalizeUsage(provider, data.usage),
   };
 }

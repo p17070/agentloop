@@ -64,6 +64,11 @@ const dom = {
   tokenCount: $("#token-count"),
   topbarProvider: $("#topbar-provider"),
   topbarModel: $("#topbar-model"),
+  statsToggle: $("#stats-toggle"),
+  statsClose: $("#stats-close"),
+  statsPopover: $("#stats-popover"),
+  statsBody: $("#stats-body"),
+  topbarTokenCount: $("#topbar-token-count"),
 };
 
 // ─── Initialization ─────────────────────────────────────────────────────────
@@ -188,6 +193,10 @@ function setupEventListeners() {
 
   // Export
   dom.exportBtn.addEventListener("click", exportChat);
+
+  // Stats popover
+  dom.statsToggle.addEventListener("click", toggleStatsPopover);
+  dom.statsClose.addEventListener("click", () => { dom.statsPopover.style.display = "none"; });
 
   // Send message
   dom.sendBtn.addEventListener("click", sendMessage);
@@ -488,6 +497,7 @@ function clearCurrentChat() {
   const chat = getActiveChat();
   if (!chat) return;
   chat.messages = [];
+  dom.statsPopover.style.display = "none";
   renderMessages();
   saveState();
 }
@@ -527,6 +537,7 @@ function renderMessages() {
         <p>Bring Your Own Key — chat with 11 LLM providers from one interface.</p>
         <p class="muted">Select a provider, enter your API key, and start chatting.</p>
       </div>`;
+    updateConversationStats();
     return;
   }
 
@@ -544,6 +555,9 @@ function renderMessages() {
   // Add copy buttons
   addCopyButtons();
 
+  // Update conversation stats in topbar
+  updateConversationStats();
+
   // Scroll to bottom
   scrollToBottom();
 }
@@ -557,10 +571,7 @@ function renderMessage(msg, index) {
 
   let meta = "";
   if (msg.usage) {
-    const parts = [];
-    if (msg.usage.input_tokens) parts.push(`${msg.usage.input_tokens} in`);
-    if (msg.usage.output_tokens) parts.push(`${msg.usage.output_tokens} out`);
-    if (parts.length) meta = `<div class="message-meta"><span>${parts.join(" · ")}</span></div>`;
+    meta = buildTokenMeta(msg.usage);
   }
 
   return `
@@ -568,6 +579,74 @@ function renderMessage(msg, index) {
       <div class="message-avatar">${avatar}</div>
       <div class="message-body">${content}${meta}</div>
     </div>`;
+}
+
+/**
+ * Build the token stats badge HTML for a single message.
+ * Shows compact summary with expandable details.
+ */
+function buildTokenMeta(usage) {
+  if (!usage) return "";
+  const inp = usage.input_tokens || 0;
+  const out = usage.output_tokens || 0;
+  if (!inp && !out) return "";
+
+  const total = inp + out;
+  const cached = usage.cached_tokens || 0;
+  const cacheWrite = usage.cache_write_tokens || 0;
+  const reasoning = usage.reasoning_tokens || 0;
+  const hasDetails = cached > 0 || cacheWrite > 0 || reasoning > 0;
+
+  // Compact summary
+  let html = `<div class="message-meta">`;
+  html += `<span class="token-summary">`;
+  html += `<span class="token-pill">${fmtNum(inp)} in</span>`;
+  html += `<span class="token-pill">${fmtNum(out)} out</span>`;
+  if (cached > 0) {
+    const pct = inp > 0 ? Math.round((cached / inp) * 100) : 0;
+    html += `<span class="token-pill token-cache">${fmtNum(cached)} cached (${pct}%)</span>`;
+  }
+  if (reasoning > 0) {
+    html += `<span class="token-pill token-reasoning">${fmtNum(reasoning)} reasoning</span>`;
+  }
+  html += `</span>`;
+
+  // Expandable details
+  if (hasDetails) {
+    html += `<button class="token-details-toggle" onclick="this.parentElement.classList.toggle('expanded')" title="Toggle details">`;
+    html += `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>`;
+    html += `</button>`;
+    html += `<div class="token-details">`;
+    html += `<div class="token-details-grid">`;
+    html += `<span class="td-label">Prompt</span><span class="td-value">${fmtNum(inp)}</span>`;
+    html += `<span class="td-label">Completion</span><span class="td-value">${fmtNum(out)}</span>`;
+    html += `<span class="td-label">Total</span><span class="td-value">${fmtNum(total)}</span>`;
+    if (cached > 0) {
+      const pct = inp > 0 ? Math.round((cached / inp) * 100) : 0;
+      html += `<span class="td-label">Cache read</span><span class="td-value td-cache">${fmtNum(cached)} <span class="td-pct">(${pct}%)</span></span>`;
+    }
+    if (cacheWrite > 0) {
+      html += `<span class="td-label">Cache write</span><span class="td-value td-cache-write">${fmtNum(cacheWrite)}</span>`;
+    }
+    if (reasoning > 0) {
+      html += `<span class="td-label">Reasoning</span><span class="td-value td-reasoning">${fmtNum(reasoning)}</span>`;
+    }
+    if (cached > 0 && inp > 0) {
+      const pct = Math.round((cached / inp) * 100);
+      html += `<span class="td-label">Cache hit rate</span>`;
+      html += `<span class="td-value"><span class="cache-bar"><span class="cache-bar-fill" style="width:${pct}%"></span></span> ${pct}%</span>`;
+    }
+    html += `</div></div>`;
+  }
+
+  html += `</div>`;
+  return html;
+}
+
+/** Format large numbers with commas: 12345 → "12,345" */
+function fmtNum(n) {
+  if (n == null) return "0";
+  return n.toLocaleString();
 }
 
 function renderMarkdown(text) {
@@ -695,18 +774,19 @@ function finalizeStreamingMessage(msgEl, text, usage) {
 
   addCopyButtons();
 
-  // Add usage info
+  // Add usage info with enhanced display
   if (usage) {
-    const parts = [];
-    if (usage.input_tokens) parts.push(`${usage.input_tokens} in`);
-    if (usage.output_tokens) parts.push(`${usage.output_tokens} out`);
-    if (parts.length) {
-      const meta = document.createElement("div");
-      meta.className = "message-meta";
-      meta.innerHTML = `<span>${parts.join(" · ")}</span>`;
-      msgEl.querySelector(".message-body").appendChild(meta);
+    const metaHtml = buildTokenMeta(usage);
+    if (metaHtml) {
+      const wrapper = document.createElement("div");
+      wrapper.innerHTML = metaHtml;
+      const metaEl = wrapper.firstElementChild;
+      if (metaEl) msgEl.querySelector(".message-body").appendChild(metaEl);
     }
   }
+
+  // Update conversation stats
+  updateConversationStats();
 
   scrollToBottom();
 }
@@ -818,7 +898,7 @@ async function handleStreamingResponse(response, chat) {
   const { msgEl, index } = appendStreamingMessage();
 
   let fullText = "";
-  let usage = null;
+  let rawUsage = null;
 
   try {
     for await (const event of parser(reader)) {
@@ -829,7 +909,8 @@ async function handleStreamingResponse(response, chat) {
           updateStreamingMessage(msgEl, fullText);
           break;
         case "usage":
-          usage = { ...usage, ...event.usage };
+          // Merge partial usage events (Anthropic sends input on start, output on delta)
+          rawUsage = { ...rawUsage, ...event.usage };
           break;
         case "error":
           throw new Error(event.error);
@@ -840,6 +921,9 @@ async function handleStreamingResponse(response, chat) {
   } catch (err) {
     if (err.name !== "AbortError") throw err;
   }
+
+  // Normalize the accumulated raw usage
+  const usage = normalizeUsage(state.provider, rawUsage);
 
   chat.messages[index].content = fullText;
   chat.messages[index].usage = usage;
@@ -991,6 +1075,175 @@ function saveState() {
   } catch {
     // localStorage might be full — silently fail
   }
+}
+
+// ─── Conversation Stats ──────────────────────────────────────────────────
+
+/**
+ * Aggregate token usage across all messages in the active chat.
+ */
+function getConversationStats() {
+  const chat = getActiveChat();
+  if (!chat) return null;
+
+  const stats = {
+    messages: chat.messages.length,
+    turns: chat.messages.filter(m => m.role === "assistant").length,
+    input_tokens: 0,
+    output_tokens: 0,
+    total_tokens: 0,
+    cached_tokens: 0,
+    cache_write_tokens: 0,
+    reasoning_tokens: 0,
+  };
+
+  for (const msg of chat.messages) {
+    if (!msg.usage) continue;
+    stats.input_tokens += msg.usage.input_tokens || 0;
+    stats.output_tokens += msg.usage.output_tokens || 0;
+    stats.cached_tokens += msg.usage.cached_tokens || 0;
+    stats.cache_write_tokens += msg.usage.cache_write_tokens || 0;
+    stats.reasoning_tokens += msg.usage.reasoning_tokens || 0;
+  }
+  stats.total_tokens = stats.input_tokens + stats.output_tokens;
+  return stats;
+}
+
+/**
+ * Update the topbar token counter badge.
+ */
+function updateConversationStats() {
+  const stats = getConversationStats();
+
+  if (!stats || stats.total_tokens === 0) {
+    dom.topbarTokenCount.textContent = "";
+    dom.statsToggle.classList.remove("has-stats");
+    return;
+  }
+
+  dom.topbarTokenCount.textContent = fmtCompact(stats.total_tokens);
+  dom.statsToggle.classList.add("has-stats");
+
+  // If popover is open, refresh it
+  if (dom.statsPopover.style.display !== "none") {
+    renderStatsPopover(stats);
+  }
+}
+
+/** Format numbers compactly: 1234 -> "1.2k", 1234567 -> "1.2M" */
+function fmtCompact(n) {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, "") + "k";
+  return n.toString();
+}
+
+/**
+ * Toggle the stats popover panel.
+ */
+function toggleStatsPopover() {
+  const visible = dom.statsPopover.style.display !== "none";
+  if (visible) {
+    dom.statsPopover.style.display = "none";
+    return;
+  }
+
+  const stats = getConversationStats();
+  if (!stats || stats.total_tokens === 0) return;
+
+  renderStatsPopover(stats);
+  dom.statsPopover.style.display = "flex";
+}
+
+/**
+ * Render the stats popover content with visual breakdowns.
+ */
+function renderStatsPopover(stats) {
+  const hasCacheData = stats.cached_tokens > 0 || stats.cache_write_tokens > 0;
+  const hasReasoningData = stats.reasoning_tokens > 0;
+  const cacheHitRate = stats.input_tokens > 0
+    ? Math.round((stats.cached_tokens / stats.input_tokens) * 100) : 0;
+
+  // Token distribution for the bar chart
+  const total = stats.total_tokens || 1;
+  const inPct = Math.round((stats.input_tokens / total) * 100);
+  const outPct = 100 - inPct;
+
+  let html = "";
+
+  // Total tokens hero
+  html += `<div class="stats-hero">`;
+  html += `<div class="stats-hero-value">${fmtNum(stats.total_tokens)}</div>`;
+  html += `<div class="stats-hero-label">total tokens</div>`;
+  html += `</div>`;
+
+  // Distribution bar
+  html += `<div class="stats-distribution">`;
+  html += `<div class="stats-dist-bar">`;
+  html += `<div class="stats-dist-segment dist-input" style="width:${inPct}%" title="Input: ${fmtNum(stats.input_tokens)}"></div>`;
+  html += `<div class="stats-dist-segment dist-output" style="width:${outPct}%" title="Output: ${fmtNum(stats.output_tokens)}"></div>`;
+  html += `</div>`;
+  html += `<div class="stats-dist-legend">`;
+  html += `<span class="stats-legend-item"><span class="legend-dot dist-input-dot"></span>Input ${fmtNum(stats.input_tokens)}</span>`;
+  html += `<span class="stats-legend-item"><span class="legend-dot dist-output-dot"></span>Output ${fmtNum(stats.output_tokens)}</span>`;
+  html += `</div>`;
+  html += `</div>`;
+
+  // Stats grid
+  html += `<div class="stats-grid">`;
+  html += `<div class="stats-cell"><div class="stats-cell-value">${stats.turns}</div><div class="stats-cell-label">Turns</div></div>`;
+  html += `<div class="stats-cell"><div class="stats-cell-value">${fmtNum(stats.input_tokens)}</div><div class="stats-cell-label">Prompt</div></div>`;
+  html += `<div class="stats-cell"><div class="stats-cell-value">${fmtNum(stats.output_tokens)}</div><div class="stats-cell-label">Completion</div></div>`;
+
+  if (hasReasoningData) {
+    html += `<div class="stats-cell"><div class="stats-cell-value stats-reasoning">${fmtNum(stats.reasoning_tokens)}</div><div class="stats-cell-label">Reasoning</div></div>`;
+  }
+  html += `</div>`;
+
+  // Cache section
+  if (hasCacheData) {
+    html += `<div class="stats-cache-section">`;
+    html += `<div class="stats-section-title">Cache Performance</div>`;
+
+    // Cache hit rate ring
+    html += `<div class="stats-cache-ring-row">`;
+    html += `<div class="stats-cache-ring">`;
+    html += buildCacheRing(cacheHitRate);
+    html += `</div>`;
+    html += `<div class="stats-cache-details">`;
+    html += `<div class="stats-cache-row"><span class="stats-cache-label">Cache read</span><span class="stats-cache-val">${fmtNum(stats.cached_tokens)}</span></div>`;
+    if (stats.cache_write_tokens > 0) {
+      html += `<div class="stats-cache-row"><span class="stats-cache-label">Cache write</span><span class="stats-cache-val">${fmtNum(stats.cache_write_tokens)}</span></div>`;
+    }
+    const saved = stats.cached_tokens;
+    if (saved > 0) {
+      html += `<div class="stats-cache-row stats-cache-saved"><span class="stats-cache-label">Tokens saved</span><span class="stats-cache-val">${fmtNum(saved)}</span></div>`;
+    }
+    html += `</div>`;
+    html += `</div>`;
+
+    html += `</div>`;
+  }
+
+  dom.statsBody.innerHTML = html;
+}
+
+/**
+ * Build an SVG ring chart for cache hit rate.
+ */
+function buildCacheRing(pct) {
+  const r = 28;
+  const c = 2 * Math.PI * r;
+  const offset = c - (c * pct / 100);
+
+  return `<svg width="72" height="72" viewBox="0 0 72 72">
+    <circle cx="36" cy="36" r="${r}" fill="none" stroke="var(--border)" stroke-width="5"/>
+    <circle cx="36" cy="36" r="${r}" fill="none" stroke="var(--success)" stroke-width="5"
+      stroke-dasharray="${c}" stroke-dashoffset="${offset}"
+      stroke-linecap="round" transform="rotate(-90 36 36)"
+      style="transition: stroke-dashoffset 0.6s ease"/>
+    <text x="36" y="36" text-anchor="middle" dominant-baseline="central"
+      font-size="14" font-weight="700" fill="var(--text-primary)">${pct}%</text>
+  </svg>`;
 }
 
 // ─── Boot ───────────────────────────────────────────────────────────────────
