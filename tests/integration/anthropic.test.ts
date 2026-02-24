@@ -14,6 +14,7 @@ import {
   createMessageStream,
   type AnthropicResponse,
   type AnthropicContentBlock,
+  type AnthropicTool,
   type SSEEvent,
 } from "./anthropic-api.js";
 
@@ -482,5 +483,190 @@ describe("Anthropic Messages API — system message", () => {
 
     const text = (response.content[0].text as string).trim();
     expect(text).toContain("PINEAPPLE");
+  });
+});
+
+// ─── Prompt Caching ──────────────────────────────────────────────────────────
+
+describe("Anthropic Messages API — prompt caching", () => {
+  // A long system prompt to meet the minimum caching threshold (1024 tokens for Claude Sonnet).
+  // We generate a deterministic block of filler text.
+  const longSystemText = [
+    "You are a helpful assistant specialized in software engineering.",
+    "You have deep expertise in TypeScript, Node.js, Python, Rust, Go, and Java.",
+    "When answering questions, always provide code examples when relevant.",
+    "Format your responses using markdown. Use code blocks with language tags.",
+    "Be concise but thorough. Explain trade-offs and alternative approaches.",
+    ...Array.from({ length: 100 }, (_, i) =>
+      `Technical knowledge area #${i + 1}: You understand distributed systems, ` +
+      `databases, API design, testing strategies, CI/CD pipelines, cloud infrastructure, ` +
+      `containerization, monitoring, security best practices, and performance optimization. ` +
+      `You can help with architecture decisions, code reviews, debugging, and refactoring.`
+    ),
+  ].join("\n\n");
+
+  it("accepts system as array of content blocks with cache_control", async () => {
+    const response = await createMessage(apiKey, {
+      model: MODEL,
+      system: [
+        {
+          type: "text",
+          text: longSystemText,
+          cache_control: { type: "ephemeral" },
+        } as AnthropicContentBlock,
+      ],
+      messages: [{ role: "user", content: "Say hello." }],
+      max_tokens: 32,
+      temperature: 0,
+    });
+
+    expect(response.type).toBe("message");
+    expect(response.content.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("reports cache_creation_input_tokens on first request (cache write)", async () => {
+    // Use a unique system prompt to ensure cache miss
+    const uniqueSystem = longSystemText + `\n\nUnique marker: ${Date.now()}-${Math.random()}`;
+
+    const response = await createMessage(apiKey, {
+      model: MODEL,
+      system: [
+        {
+          type: "text",
+          text: uniqueSystem,
+          cache_control: { type: "ephemeral" },
+        } as AnthropicContentBlock,
+      ],
+      messages: [{ role: "user", content: "Reply with just: ok" }],
+      max_tokens: 16,
+      temperature: 0,
+    });
+
+    // On first request with new content, cache_creation_input_tokens should be > 0
+    expect(response.usage).toBeDefined();
+    expect(typeof response.usage.cache_creation_input_tokens).toBe("number");
+    expect(response.usage.cache_creation_input_tokens!).toBeGreaterThan(0);
+    // No cache read on first request
+    expect(response.usage.cache_read_input_tokens ?? 0).toBe(0);
+  });
+
+  it("reports cache_read_input_tokens on repeated request (cache hit)", async () => {
+    // Use a stable unique marker for this test run
+    const stableMarker = "cache-test-stable-v1-integration";
+    const stableSystem = longSystemText + `\n\nStable marker: ${stableMarker}`;
+
+    // First request — primes the cache
+    await createMessage(apiKey, {
+      model: MODEL,
+      system: [
+        {
+          type: "text",
+          text: stableSystem,
+          cache_control: { type: "ephemeral" },
+        } as AnthropicContentBlock,
+      ],
+      messages: [{ role: "user", content: "Reply with: first" }],
+      max_tokens: 16,
+      temperature: 0,
+    });
+
+    // Second request — same system prompt, should hit cache
+    const response2 = await createMessage(apiKey, {
+      model: MODEL,
+      system: [
+        {
+          type: "text",
+          text: stableSystem,
+          cache_control: { type: "ephemeral" },
+        } as AnthropicContentBlock,
+      ],
+      messages: [{ role: "user", content: "Reply with: second" }],
+      max_tokens: 16,
+      temperature: 0,
+    });
+
+    expect(response2.usage).toBeDefined();
+    expect(typeof response2.usage.cache_read_input_tokens).toBe("number");
+    expect(response2.usage.cache_read_input_tokens!).toBeGreaterThan(0);
+  });
+
+  it("supports cache_control on user message content blocks", async () => {
+    const longUserContent = Array.from({ length: 80 }, (_, i) =>
+      `Document section ${i + 1}: This is a detailed technical specification about ` +
+      `API design patterns, error handling strategies, and response normalization ` +
+      `across multiple LLM providers. The content covers edge cases and provider quirks.`
+    ).join("\n\n");
+
+    const response = await createMessage(apiKey, {
+      model: MODEL,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: longUserContent,
+              cache_control: { type: "ephemeral" },
+            } as AnthropicContentBlock,
+            {
+              type: "text",
+              text: "Summarize the above in one sentence.",
+            } as AnthropicContentBlock,
+          ],
+        },
+      ],
+      max_tokens: 128,
+      temperature: 0,
+    });
+
+    expect(response.type).toBe("message");
+    // Should report either cache creation or cache read tokens
+    const cacheTokens =
+      (response.usage.cache_creation_input_tokens ?? 0) +
+      (response.usage.cache_read_input_tokens ?? 0);
+    expect(cacheTokens).toBeGreaterThan(0);
+  });
+
+  it("supports cache_control on tool definitions", async () => {
+    // Create enough tool definitions to meet the caching threshold
+    const tools: AnthropicTool[] = Array.from({ length: 20 }, (_, i) => ({
+      name: `tool_${i}`,
+      description: `A detailed tool description for tool number ${i}. ` +
+        `This tool performs complex operations including data transformation, ` +
+        `validation, API calls, and result formatting. Parameters are validated ` +
+        `against a strict schema before execution.`,
+      input_schema: {
+        type: "object",
+        properties: {
+          input: { type: "string", description: `Input for tool ${i}` },
+          options: {
+            type: "object",
+            properties: {
+              format: { type: "string", enum: ["json", "xml", "csv"] },
+              verbose: { type: "boolean" },
+            },
+          },
+        },
+        required: ["input"],
+      },
+    }));
+
+    // Mark the last tool with cache_control
+    tools[tools.length - 1].cache_control = { type: "ephemeral" };
+
+    const response = await createMessage(apiKey, {
+      model: MODEL,
+      messages: [{ role: "user", content: "What tools do you have? Just list their names." }],
+      tools,
+      max_tokens: 256,
+      temperature: 0,
+    });
+
+    expect(response.type).toBe("message");
+    // Should report cache creation or read tokens for the tool definitions
+    const cacheTokens =
+      (response.usage.cache_creation_input_tokens ?? 0) +
+      (response.usage.cache_read_input_tokens ?? 0);
+    expect(cacheTokens).toBeGreaterThan(0);
   });
 });

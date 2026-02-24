@@ -37,13 +37,14 @@ export interface AnthropicTool {
   name: string;
   description: string;
   input_schema: Record<string, unknown>;
+  cache_control?: { type: "ephemeral" };
 }
 
 export interface AnthropicRequest {
   model: string;
   messages: AnthropicMessage[];
   max_tokens: number;
-  system?: string;
+  system?: string | AnthropicContentBlock[];
   tools?: AnthropicTool[];
   tool_choice?: { type: string; name?: string };
   stream?: boolean;

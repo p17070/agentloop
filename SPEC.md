@@ -10,11 +10,16 @@ ensure exhaustive type checking at compile time.
 ```typescript
 type Role = "system" | "user" | "assistant" | "tool";
 
+// Cache control hint for provider-native prompt caching.
+// Anthropic: maps to cache_control: { type: "ephemeral" } on content blocks/tools.
+// OpenAI: ignored (caching is automatic). Gemini: ignored. Others: stripped.
+type CacheControl = "ephemeral";
+
 // Discriminated union — exhaustive via `type` field
 type ContentPart =
-  | { type: "text"; text: string }
-  | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } }
-  | { type: "input_audio"; input_audio: { data: string; format: "wav" | "mp3" } };
+  | { type: "text"; text: string; cache?: CacheControl }
+  | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" }; cache?: CacheControl }
+  | { type: "input_audio"; input_audio: { data: string; format: "wav" | "mp3" }; cache?: CacheControl };
 
 interface ChatMessage {
   role: Role;
@@ -22,6 +27,7 @@ interface ChatMessage {
   name?: string;
   tool_calls?: ToolCall[];
   tool_call_id?: string;
+  cache?: CacheControl;           // Applied to last content block (Anthropic prompt caching)
 }
 ```
 
@@ -36,6 +42,7 @@ interface ToolDefinition {
     parameters?: Record<string, unknown>;  // JSON Schema
     strict?: boolean;
   };
+  cache?: CacheControl;                    // Cache this tool definition (Anthropic prompt caching)
 }
 
 interface ToolCall {
@@ -794,7 +801,26 @@ RULES:
    - If response_format.type === "json_object":
      Append to system prompt: "Respond with valid JSON only."
 
-9. ENDPOINT
+9. CACHE CONTROL (provider-native prompt caching)
+   - Anthropic supports `cache_control: { type: "ephemeral" }` on content blocks,
+     system blocks, and tool definitions. Cached content persists for 5 minutes.
+   - Transform rules:
+     a. ContentPart with `cache: "ephemeral"`:
+        → append `cache_control: { type: "ephemeral" }` to the Anthropic content block
+     b. ChatMessage with `cache: "ephemeral"`:
+        → apply `cache_control: { type: "ephemeral" }` to the LAST content block
+        → if content is a string, convert to [{ type: "text", text, cache_control: { type: "ephemeral" } }]
+     c. ToolDefinition with `cache: "ephemeral"`:
+        → append `cache_control: { type: "ephemeral" }` to the Anthropic tool object
+     d. System message with `cache: "ephemeral"`:
+        → system content becomes [{ type: "text", text, cache_control: { type: "ephemeral" } }]
+        → (system must be array-of-blocks format, not plain string)
+   - Usage fields reported in response:
+     → usage.cache_creation_input_tokens → details.cacheWriteTokens (first request, cache miss)
+     → usage.cache_read_input_tokens → details.cachedTokens (subsequent requests, cache hit)
+   - For all other providers: strip `cache` field silently (no-op).
+
+10. ENDPOINT
    - POST ${baseURL}/messages
    - NOT /chat/completions
 ```

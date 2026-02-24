@@ -137,7 +137,7 @@ Tests all provider-specific quirks discovered during API research:
 
 Integration tests call real provider APIs to validate that actual response shapes match the SPEC. They are **excluded from the default test run** and require API keys.
 
-### Anthropic Integration Tests (30 tests)
+### Anthropic Integration Tests (35 tests)
 
 Tests are in `tests/integration/anthropic.test.ts` and use a minimal API client in `tests/integration/anthropic-api.ts` (native `fetch()`, no SDK dependency).
 
@@ -152,6 +152,7 @@ Tests are in `tests/integration/anthropic.test.ts` and use a minimal API client 
 | Error handling | 2 | Invalid model error, invalid API key 401/403 |
 | Multi-turn | 1 | Context preserved across conversation turns |
 | System message | 1 | Top-level `system` parameter respected |
+| Prompt caching | 5 | System block with `cache_control`, `cache_creation_input_tokens` on write, `cache_read_input_tokens` on hit, `cache_control` on user content blocks, `cache_control` on tool definitions |
 
 ### Gemini Integration Tests (28 tests)
 

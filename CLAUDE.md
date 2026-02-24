@@ -32,6 +32,7 @@ GEMINI_API_KEY=AIza...       npm run test:integration
 - A parameter filter layer (strip/rename/clamp/defaults) handles provider differences
 - All responses normalized to `ResponsePart[]` — a 10-variant discriminated union
 - Streaming uses content-part lifecycle events: `content.start → content.delta → content.done`
+- Provider-native prompt caching via `cache: "ephemeral"` on `ContentPart`, `ChatMessage`, and `ToolDefinition` (Anthropic; no-op for others)
 
 ## Key Files
 
@@ -97,6 +98,7 @@ tests/                       # Unit tests (vitest)
 - Anthropic uses `x-api-key` header, NOT `Authorization: Bearer`. Also requires `anthropic-version: 2023-06-01` header.
 - Anthropic `tool_use.input` is a parsed object — must `JSON.stringify()` for the unified `ToolCallPart.arguments` string.
 - Anthropic endpoint is `/v1/messages`, NOT `/v1/chat/completions`.
+- Anthropic prompt caching: `cache_control: { type: "ephemeral" }` goes on content blocks, system blocks, and tool definitions. System must be array-of-blocks (not string) when using cache. Min ~1024 tokens for caching to activate. Response reports `cache_creation_input_tokens` (write) and `cache_read_input_tokens` (hit).
 - Gemini uses `x-goog-api-key` header (not Bearer). Endpoint is `/models/{model}:generateContent`.
 - Gemini `functionCall.args` is a parsed object — must `JSON.stringify()` for `ToolCallPart.arguments`.
 - Gemini tool results use `functionResponse` matched by **name** (not ID like other providers).
