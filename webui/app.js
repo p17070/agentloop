@@ -68,13 +68,18 @@ const dom = {
   sendBtn: $("#send-btn"),
   stopBtn: $("#stop-btn"),
   tokenCount: $("#token-count"),
-  topbarProvider: $("#topbar-provider"),
-  topbarModel: $("#topbar-model"),
   statsToggle: $("#stats-toggle"),
   statsClose: $("#stats-close"),
   statsPopover: $("#stats-popover"),
   statsBody: $("#stats-body"),
   topbarTokenCount: $("#topbar-token-count"),
+  // Settings modal
+  settingsOverlay: $("#settings-overlay"),
+  settingsOpen: $("#settings-open"),
+  settingsModalClose: $("#settings-modal-close"),
+  settingsProviderLabel: $("#settings-provider-label"),
+  apiKeyStatus: $("#api-key-status"),
+  keyStatusDot: $("#key-status-dot"),
 };
 
 // ─── Initialization ─────────────────────────────────────────────────────────
@@ -164,6 +169,7 @@ function setupEventListeners() {
   // API key input
   dom.apiKeyInput.addEventListener("input", (e) => {
     setApiKey(state.provider, e.target.value);
+    updateKeyStatus();
   });
 
   // Toggle key visibility
@@ -252,6 +258,21 @@ function setupEventListeners() {
   // Chat search/filter
   dom.chatSearch.addEventListener("input", renderChatList);
 
+  // Settings modal
+  dom.settingsOpen.addEventListener("click", () => openSettingsModal());
+  dom.apiKeyStatus.addEventListener("click", () => openSettingsModal("api-key"));
+  dom.settingsModalClose.addEventListener("click", closeSettingsModal);
+  dom.settingsOverlay.addEventListener("click", (e) => {
+    if (e.target === dom.settingsOverlay) closeSettingsModal();
+  });
+
+  // Settings modal tabs
+  dom.settingsOverlay.querySelectorAll(".settings-tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      switchSettingsTab(tab.dataset.tab);
+    });
+  });
+
   // Keyboard shortcuts
   document.addEventListener("keydown", handleKeyboardShortcuts);
 }
@@ -262,8 +283,12 @@ function handleKeyboardShortcuts(e) {
   // Don't fire shortcuts when typing in inputs (except Escape)
   const isInput = e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT";
 
-  // Escape: close model dropdown, close sidebar, or blur active input
+  // Escape: close settings modal, close model dropdown, close sidebar, or blur active input
   if (e.key === "Escape") {
+    if (dom.settingsOverlay.style.display !== "none") {
+      closeSettingsModal();
+      return;
+    }
     if (state.comboboxOpen) {
       closeCombobox();
       return;
@@ -331,6 +356,31 @@ function toggleSidebar(open) {
   } else if (overlay) {
     overlay.classList.remove("visible");
   }
+}
+
+// ─── Settings Modal ─────────────────────────────────────────────────────────
+
+function openSettingsModal(tab) {
+  dom.settingsOverlay.style.display = "flex";
+  if (tab) switchSettingsTab(tab);
+  // Refresh provider label
+  const entry = PROVIDERS[state.provider];
+  if (dom.settingsProviderLabel) {
+    dom.settingsProviderLabel.textContent = entry?.name || state.provider;
+  }
+}
+
+function closeSettingsModal() {
+  dom.settingsOverlay.style.display = "none";
+}
+
+function switchSettingsTab(tabId) {
+  dom.settingsOverlay.querySelectorAll(".settings-tab").forEach(t => {
+    t.classList.toggle("active", t.dataset.tab === tabId);
+  });
+  dom.settingsOverlay.querySelectorAll(".settings-tab-pane").forEach(p => {
+    p.classList.toggle("active", p.dataset.tab === tabId);
+  });
 }
 
 // ─── Provider Handling ──────────────────────────────────────────────────────
@@ -402,9 +452,20 @@ function applyProvider(provider) {
 }
 
 function updateTopbar() {
+  // Update key status indicator
+  updateKeyStatus();
+  // Update provider label in settings modal
   const entry = PROVIDERS[state.provider];
-  dom.topbarProvider.textContent = entry?.name || state.provider;
-  dom.topbarModel.textContent = state.model || entry?.defaultModel || "";
+  if (dom.settingsProviderLabel) {
+    dom.settingsProviderLabel.textContent = entry?.name || state.provider;
+  }
+}
+
+function updateKeyStatus() {
+  const key = getApiKey(state.provider);
+  if (dom.keyStatusDot) {
+    dom.keyStatusDot.classList.toggle("has-key", !!key);
+  }
 }
 
 // ─── Model Combobox ─────────────────────────────────────────────────────────
