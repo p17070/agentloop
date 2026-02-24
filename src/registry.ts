@@ -1,6 +1,6 @@
 // AgentLoop — Provider Registry & Parameter Filtering
 
-import type { ChatRequest, ProviderEntry } from "./types.js";
+import type { ChatRequest, ProviderEntry, ProviderOverrides } from "./types.js";
 
 // ─── Provider Table ─────────────────────────────────────────────────────────
 
@@ -76,6 +76,11 @@ export const PROVIDERS: Record<string, ProviderEntry> = {
     auth: "x-goog-api-key",
     transform: "google",
   },
+
+  xai: {
+    baseURL: "https://api.x.ai/v1",
+    auth: "bearer",
+  },
 };
 
 // ─── Parameter Filter ───────────────────────────────────────────────────────
@@ -128,27 +133,99 @@ export function filterParams(request: ChatRequest, entry: ProviderEntry): Record
 
 // ─── Header Builder ─────────────────────────────────────────────────────────
 
-export function buildHeaders(entry: ProviderEntry, apiKey: string): Record<string, string> {
+/**
+ * Builds request headers for a provider.
+ * Provider-level headers are applied first, then overrides on top (so overrides win).
+ */
+export function buildHeaders(
+  entry: ProviderEntry,
+  apiKey: string,
+  overrides?: ProviderOverrides,
+): Record<string, string> {
+  const effectiveKey = overrides?.apiKey ?? apiKey;
+
   const headers: Record<string, string> = {
     "content-type": "application/json",
   };
 
   switch (entry.auth) {
     case "bearer":
-      headers["authorization"] = `Bearer ${apiKey}`;
+      headers["authorization"] = `Bearer ${effectiveKey}`;
       break;
     case "x-api-key":
-      headers["x-api-key"] = apiKey;
+      headers["x-api-key"] = effectiveKey;
       break;
     case "x-goog-api-key":
-      headers["x-goog-api-key"] = apiKey;
+      headers["x-goog-api-key"] = effectiveKey;
       break;
     case "none":
       break;
   }
 
-  // Merge extra headers (e.g., anthropic-version)
+  // Merge provider-level headers (e.g., anthropic-version)
   Object.assign(headers, entry.headers ?? {});
 
+  // Merge user-supplied override headers last (highest priority)
+  if (overrides?.headers) {
+    Object.assign(headers, overrides.headers);
+  }
+
   return headers;
+}
+
+// ─── Provider Resolution ───────────────────────────────────────────────────
+
+/**
+ * Resolves a provider by name, applying user overrides on top of built-in config.
+ * Returns a ProviderEntry with baseURL/headers merged from overrides.
+ * Throws if the provider name is unknown and no overrides supply a baseURL.
+ */
+export function resolveProvider(
+  name: string,
+  overrides?: ProviderOverrides,
+): ProviderEntry {
+  const builtin = PROVIDERS[name];
+
+  if (!builtin && !overrides?.baseURL) {
+    throw new Error(
+      `Unknown provider "${name}". Pass a baseURL in overrides or register it first.`,
+    );
+  }
+
+  if (!builtin) {
+    // Fully custom provider — caller must supply baseURL
+    return {
+      baseURL: overrides!.baseURL!,
+      auth: "bearer",
+      headers: overrides?.headers,
+    };
+  }
+
+  if (!overrides) return builtin;
+
+  // Merge overrides on top of built-in config
+  return {
+    ...builtin,
+    ...(overrides.baseURL ? { baseURL: overrides.baseURL } : {}),
+    headers: {
+      ...builtin.headers,
+      ...overrides.headers,
+    },
+  };
+}
+
+/**
+ * Registers a custom provider (or replaces an existing one) in the global registry.
+ *
+ * Useful for adding self-hosted / proxy providers at startup:
+ * ```ts
+ * registerProvider("azure", {
+ *   baseURL: "https://my-instance.openai.azure.com/openai/deployments/gpt-4o/",
+ *   auth: "bearer",
+ *   headers: { "api-version": "2024-08-01-preview" },
+ * });
+ * ```
+ */
+export function registerProvider(name: string, entry: ProviderEntry): void {
+  PROVIDERS[name] = entry;
 }
