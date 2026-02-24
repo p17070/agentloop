@@ -61,24 +61,17 @@
 
           <!-- Model Selector -->
           <div class="setting-group">
-            <label>Model</label>
-            <div class="model-selector" id="model-selector">
-              <button class="model-selector-trigger" id="model-trigger" type="button">
-                <span class="model-trigger-name" id="model-trigger-name">Select a model</span>
-                <span class="model-trigger-meta" id="model-trigger-meta"></span>
-                <svg class="model-trigger-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-              </button>
-              <div class="model-dropdown" id="model-dropdown">
-                <div class="model-dropdown-search">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                  <input type="text" id="model-search" placeholder="Search models or type custom ID..." autocomplete="off">
-                </div>
-                <div class="model-dropdown-list" id="model-list">
-                  <!-- Populated dynamically -->
-                </div>
-                <div class="model-dropdown-footer" id="model-dropdown-footer">
-                  <!-- Custom model option appears here -->
-                </div>
+            <label for="model-input">Model</label>
+            <div class="model-combobox" id="model-combobox">
+              <input type="text" id="model-input" placeholder="Type to search or enter model ID..." autocomplete="off" spellcheck="false">
+              <div class="modality-tabs" id="modality-tabs">
+                <button class="mod-tab active" data-mod="chat">Chat</button>
+                <button class="mod-tab" data-mod="image">Image</button>
+                <button class="mod-tab" data-mod="audio">Audio</button>
+                <button class="mod-tab" data-mod="embedding">Embed</button>
+              </div>
+              <div class="model-results" id="model-results">
+                <!-- Populated dynamically -->
               </div>
             </div>
           </div>
