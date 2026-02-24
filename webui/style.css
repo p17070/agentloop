@@ -1938,3 +1938,294 @@ select {
     grid-template-columns: repeat(2, 1fr);
   }
 }
+
+/* ─── MCP — Topbar Indicator ────────────────────────────────────────────── */
+
+.topbar-mcp-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+  height: 28px;
+}
+
+.topbar-mcp-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}
+
+.topbar-mcp-btn.has-connected {
+  color: var(--text-secondary);
+}
+
+.topbar-mcp-btn.has-tools {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 40%, transparent);
+}
+
+.mcp-tool-badge:empty {
+  display: none;
+}
+
+.mcp-tool-badge {
+  font-weight: 600;
+  font-size: 11px;
+}
+
+/* ─── MCP — Settings Tab ───────────────────────────────────────────────── */
+
+.mcp-add-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mcp-servers-section {
+  padding-top: 12px;
+}
+
+.mcp-server-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.mcp-servers-empty {
+  padding: 16px 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.mcp-server-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius);
+  border-left: 3px solid var(--text-muted);
+}
+
+.mcp-server-item.mcp-status-ok {
+  border-left-color: var(--success);
+}
+
+.mcp-server-item.mcp-status-err {
+  border-left-color: var(--danger);
+}
+
+.mcp-server-item.mcp-status-pending {
+  border-left-color: var(--warning);
+}
+
+.mcp-server-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.mcp-server-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.mcp-dot-connected { background: var(--success); }
+.mcp-dot-error { background: var(--danger); }
+.mcp-dot-connecting { background: var(--warning); animation: blink 1s infinite; }
+
+.mcp-server-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.mcp-server-tools {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.mcp-server-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.mcp-server-actions .icon-btn {
+  width: 24px;
+  height: 24px;
+}
+
+.mcp-server-error {
+  width: 100%;
+  font-size: 11px;
+  color: var(--danger);
+  padding: 4px 0 0 16px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+/* ─── MCP — Tool List ──────────────────────────────────────────────────── */
+
+.mcp-tools-section {
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  margin-top: 12px;
+}
+
+.mcp-tool-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.mcp-tool-item {
+  padding: 6px 10px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius);
+}
+
+.mcp-tool-name {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.mcp-tool-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+.mcp-tool-server {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* ─── MCP — Tool Call / Result Messages ────────────────────────────────── */
+
+.message.tool-call {
+  background: color-mix(in srgb, var(--warning) 8%, var(--bg-primary));
+  border: 1px solid color-mix(in srgb, var(--warning) 20%, transparent);
+  padding: 10px 16px;
+}
+
+.message.tool-call .message-avatar {
+  width: 28px;
+  height: 28px;
+  background: color-mix(in srgb, var(--warning) 20%, var(--bg-tertiary));
+  color: var(--warning);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.message.tool-result {
+  background: color-mix(in srgb, var(--success) 6%, var(--bg-primary));
+  border: 1px solid color-mix(in srgb, var(--success) 15%, transparent);
+  padding: 10px 16px;
+}
+
+.message.tool-result .message-avatar {
+  width: 28px;
+  height: 28px;
+  background: color-mix(in srgb, var(--success) 20%, var(--bg-tertiary));
+  color: var(--success);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tool-call-block {
+  margin-bottom: 6px;
+}
+
+.tool-call-block:last-child {
+  margin-bottom: 0;
+}
+
+.tool-call-name {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--warning);
+  margin-bottom: 4px;
+}
+
+.tool-call-args {
+  margin: 0;
+  border-radius: var(--radius);
+}
+
+.tool-call-args code {
+  display: block;
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.4;
+  background: var(--code-bg);
+  border-radius: var(--radius);
+  overflow-x: auto;
+}
+
+.tool-result-block {
+  margin-bottom: 6px;
+}
+
+.tool-result-block:last-child {
+  margin-bottom: 0;
+}
+
+.tool-result-name {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--success);
+  margin-bottom: 2px;
+}
+
+.tool-result-block.tool-result-error .tool-result-name {
+  color: var(--danger);
+}
+
+.tool-result-content {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.tool-result-content p {
+  margin-bottom: 4px;
+}
+
+.tool-result-content p:last-child {
+  margin-bottom: 0;
+}

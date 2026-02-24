@@ -80,6 +80,16 @@ const dom = {
   settingsProviderLabel: $("#settings-provider-label"),
   apiKeyStatus: $("#api-key-status"),
   keyStatusDot: $("#key-status-dot"),
+  // MCP
+  mcpIndicator: $("#mcp-indicator"),
+  mcpToolBadge: $("#mcp-tool-badge"),
+  mcpServerUrl: $("#mcp-server-url"),
+  mcpServerName: $("#mcp-server-name"),
+  mcpAddBtn: $("#mcp-add-btn"),
+  mcpServerList: $("#mcp-server-list"),
+  mcpToolsSection: $("#mcp-tools-section"),
+  mcpToolCount: $("#mcp-tool-count"),
+  mcpToolList: $("#mcp-tool-list"),
 };
 
 // ─── Initialization ─────────────────────────────────────────────────────────
@@ -94,6 +104,15 @@ function init() {
 
   if (state.activeChatId) {
     renderMessages();
+  }
+
+  // Load MCP servers
+  if (typeof mcpManager !== "undefined") {
+    mcpManager.loadAndConnect().then(() => {
+      renderMcpServerList();
+      renderMcpToolList();
+      updateMcpIndicator();
+    });
   }
 
   // Configure marked
@@ -271,6 +290,13 @@ function setupEventListeners() {
     tab.addEventListener("click", () => {
       switchSettingsTab(tab.dataset.tab);
     });
+  });
+
+  // MCP
+  dom.mcpAddBtn.addEventListener("click", handleMcpAddServer);
+  dom.mcpIndicator.addEventListener("click", () => openSettingsModal("mcp"));
+  dom.mcpServerUrl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") handleMcpAddServer();
   });
 
   // Keyboard shortcuts
@@ -960,9 +986,49 @@ function renderMessages() {
 function renderMessage(msg, index) {
   const isUser = msg.role === "user";
   const isError = msg.role === "error";
-  const roleClass = isError ? "error" : msg.role;
-  const avatar = isUser ? "U" : isError ? "!" : "A";
-  const content = renderMarkdown(msg.content);
+  const isToolCall = msg.role === "tool_call";
+  const isToolResult = msg.role === "tool_result";
+
+  // Determine role class and avatar
+  let roleClass, avatar;
+  if (isToolCall) {
+    roleClass = "tool-call";
+    avatar = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>`;
+  } else if (isToolResult) {
+    roleClass = "tool-result";
+    const hasError = msg._results?.some(r => r.isError);
+    avatar = hasError
+      ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`
+      : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>`;
+  } else if (isError) {
+    roleClass = "error";
+    avatar = "!";
+  } else {
+    roleClass = msg.role;
+    avatar = isUser ? "U" : "A";
+  }
+
+  // Build content
+  let content;
+  if (isToolCall && msg._toolCallData) {
+    content = msg._toolCallData.map(tc => {
+      let argsDisplay;
+      try {
+        const parsed = JSON.parse(tc.arguments);
+        argsDisplay = JSON.stringify(parsed, null, 2);
+      } catch {
+        argsDisplay = tc.arguments;
+      }
+      return `<div class="tool-call-block"><div class="tool-call-name">${escapeHtml(tc.name)}</div><pre class="tool-call-args"><code>${escapeHtml(argsDisplay)}</code></pre></div>`;
+    }).join("");
+  } else if (isToolResult && msg._results) {
+    content = msg._results.map(r => {
+      const cls = r.isError ? "tool-result-error" : "tool-result-ok";
+      return `<div class="tool-result-block ${cls}"><div class="tool-result-name">${escapeHtml(r.name)}</div><div class="tool-result-content">${renderMarkdown(r.content)}</div></div>`;
+    }).join("");
+  } else {
+    content = renderMarkdown(msg.content);
+  }
 
   let meta = "";
   if (msg.usage) {
@@ -1224,26 +1290,56 @@ async function sendMessage() {
   // Render user message
   renderMessages();
 
-  // Send to API
+  // Send to API (with tool-use loop)
   state.isGenerating = true;
   state.abortController = new AbortController();
   updateUI();
 
   try {
-    const messages = chat.messages
-      .filter(m => m.role === "user" || m.role === "assistant")
-      .map(m => ({ role: m.role, content: m.content }));
+    await runAgentLoop(chat);
+  } catch (err) {
+    if (err.name === "AbortError") {
+      // User cancelled — finalize partial message
+      const lastMsg = chat.messages[chat.messages.length - 1];
+      if (lastMsg.role === "assistant" && !lastMsg.content) {
+        chat.messages.pop(); // Remove empty assistant message
+      }
+    } else {
+      chat.messages.push({ role: "error", content: err.message });
+    }
+    renderMessages();
+  } finally {
+    state.isGenerating = false;
+    state.abortController = null;
+    updateUI();
+    saveState();
+  }
+}
+
+/**
+ * The agentic loop: send messages to the LLM, handle tool calls, repeat.
+ * Caps at MAX_TOOL_ROUNDS iterations to prevent infinite loops.
+ */
+const MAX_TOOL_ROUNDS = 10;
+
+async function runAgentLoop(chat) {
+  const mcpTools = typeof mcpManager !== "undefined" ? mcpManager.getAllTools() : [];
+
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    // Build API messages from chat history
+    const apiMessages = buildApiMessages(chat);
 
     const { url, headers, body } = buildRequest({
       provider: state.provider,
       model: state.model || PROVIDERS[state.provider].defaultModel,
-      messages,
+      messages: apiMessages,
       systemMessage: state.systemMessage,
       temperature: state.temperature,
       maxTokens: state.maxTokens,
       topP: state.topP,
       stream: state.streaming,
       corsProxy: state.corsProxy,
+      mcpTools: mcpTools.length > 0 ? mcpTools : undefined,
     });
 
     const response = await fetch(url, {
@@ -1266,28 +1362,112 @@ async function sendMessage() {
       throw new Error(`${response.status} ${response.statusText}: ${errorMsg}`);
     }
 
+    let toolCalls = null;
+
     if (state.streaming) {
-      await handleStreamingResponse(response, chat);
+      toolCalls = await handleStreamingResponse(response, chat);
     } else {
-      await handleNonStreamingResponse(response, chat);
+      toolCalls = await handleNonStreamingResponse(response, chat);
     }
-  } catch (err) {
-    if (err.name === "AbortError") {
-      // User cancelled — finalize partial message
-      const lastMsg = chat.messages[chat.messages.length - 1];
-      if (lastMsg.role === "assistant" && !lastMsg.content) {
-        chat.messages.pop(); // Remove empty assistant message
-      }
-    } else {
-      chat.messages.push({ role: "error", content: err.message });
+
+    // If no tool calls, we're done
+    if (!toolCalls || toolCalls.length === 0) {
+      return;
     }
-    renderMessages();
-  } finally {
-    state.isGenerating = false;
-    state.abortController = null;
-    updateUI();
-    saveState();
+
+    // Execute tool calls and feed results back
+    await executeToolCalls(chat, toolCalls);
   }
+
+  // If we exhausted the loop, add an error
+  chat.messages.push({ role: "error", content: "Tool call limit reached (max " + MAX_TOOL_ROUNDS + " rounds)." });
+  renderMessages();
+}
+
+/**
+ * Build API messages from chat history, handling different message types.
+ */
+function buildApiMessages(chat) {
+  const messages = [];
+  for (const msg of chat.messages) {
+    if (msg.role === "user" || msg.role === "assistant") {
+      // Check if it's an assistant message with tool_calls metadata
+      if (msg._toolCalls) {
+        messages.push({ role: "assistant", content: msg.content, tool_calls: msg._toolCalls, _isGeminiToolCall: msg._isGeminiToolCall });
+      } else {
+        messages.push({ role: msg.role, content: msg.content });
+      }
+    } else if (msg.role === "tool_result") {
+      // Push the provider-formatted messages that were saved
+      if (msg._apiMessages) {
+        messages.push(...msg._apiMessages);
+      }
+    }
+    // Skip "error", "tool_call" display-only messages
+  }
+  return messages;
+}
+
+/**
+ * Execute MCP tool calls and add results to the chat.
+ */
+async function executeToolCalls(chat, toolCalls) {
+  // Add tool-call display message
+  chat.messages.push({
+    role: "tool_call",
+    content: toolCalls.map(tc => `${tc.name}(${tc.arguments})`).join("\n"),
+    _toolCallData: toolCalls,
+  });
+  renderMessages();
+
+  const results = [];
+  for (const tc of toolCalls) {
+    try {
+      const args = typeof tc.arguments === "string" ? safeParseJSON(tc.arguments) : tc.arguments;
+      const result = await mcpManager.executeTool(tc.name, args);
+      const text = mcpResultToText(result);
+      results.push({
+        callId: tc.id,
+        name: tc.name,
+        content: text,
+        isError: result.isError || false,
+      });
+    } catch (err) {
+      results.push({
+        callId: tc.id,
+        name: tc.name,
+        content: `Error: ${err.message}`,
+        isError: true,
+      });
+    }
+  }
+
+  // Build provider-formatted messages for the API
+  const apiMessages = buildToolResultMessages(state.provider, toolCalls, results);
+
+  // Add tool-result display message (with API messages embedded for the next round)
+  chat.messages.push({
+    role: "tool_result",
+    content: results.map(r => `${r.name}: ${r.isError ? "ERROR: " : ""}${r.content}`).join("\n\n"),
+    _results: results,
+    _apiMessages: apiMessages,
+  });
+
+  // Also save tool_calls metadata on the previous assistant message for API rebuild
+  // Find the last assistant message and annotate it
+  for (let i = chat.messages.length - 1; i >= 0; i--) {
+    if (chat.messages[i].role === "assistant") {
+      chat.messages[i]._toolCalls = toolCalls.map(tc => ({
+        id: tc.id,
+        type: "function",
+        function: { name: tc.name, arguments: tc.arguments },
+      }));
+      break;
+    }
+  }
+
+  renderMessages();
+  saveState();
 }
 
 async function handleStreamingResponse(response, chat) {
@@ -1297,6 +1477,10 @@ async function handleStreamingResponse(response, chat) {
 
   let fullText = "";
   let rawUsage = null;
+  let finishReason = null;
+
+  // Accumulate tool calls from stream deltas
+  const accToolCalls = []; // [{id, name, arguments}]
 
   try {
     for await (const event of parser(reader)) {
@@ -1306,13 +1490,37 @@ async function handleStreamingResponse(response, chat) {
           chat.messages[index].content = fullText;
           updateStreamingMessage(msgEl, fullText);
           break;
+        case "tool_call_delta":
+          // OpenAI-style incremental tool call deltas
+          if (event.index != null) {
+            while (accToolCalls.length <= event.index) {
+              accToolCalls.push({ id: "", name: "", arguments: "" });
+            }
+            const tc = accToolCalls[event.index];
+            if (event.id) tc.id = event.id;
+            if (event.name) tc.name += event.name;
+            if (event.arguments) tc.arguments += event.arguments;
+          }
+          break;
+        case "tool_call_start":
+          // Anthropic tool_use block start
+          accToolCalls.push({ id: event.id || "", name: event.name || "", arguments: "" });
+          break;
+        case "tool_call_complete":
+          // Gemini sends complete function calls
+          accToolCalls.push({
+            id: `gemini_call_${accToolCalls.length}`,
+            name: event.name,
+            arguments: event.arguments,
+          });
+          break;
         case "usage":
-          // Merge partial usage events (Anthropic sends input on start, output on delta)
           rawUsage = { ...rawUsage, ...event.usage };
           break;
         case "error":
           throw new Error(event.error);
         case "finish":
+          finishReason = event.reason;
           break;
       }
     }
@@ -1326,11 +1534,21 @@ async function handleStreamingResponse(response, chat) {
   chat.messages[index].content = fullText;
   chat.messages[index].usage = usage;
   finalizeStreamingMessage(msgEl, fullText, usage);
+
+  // Return tool calls if present
+  if (accToolCalls.length > 0 && accToolCalls.some(tc => tc.name)) {
+    return accToolCalls.filter(tc => tc.name);
+  }
+
+  return null;
 }
 
 async function handleNonStreamingResponse(response, chat) {
   const data = await response.json();
   const { text, usage } = parseResponse(state.provider, data);
+
+  // Check for tool calls
+  const toolCalls = parseToolCalls(state.provider, data);
 
   chat.messages.push({
     role: "assistant",
@@ -1339,6 +1557,8 @@ async function handleNonStreamingResponse(response, chat) {
   });
 
   renderMessages();
+
+  return toolCalls;
 }
 
 function stopGeneration() {
@@ -1642,6 +1862,136 @@ function buildCacheRing(pct) {
     <text x="36" y="36" text-anchor="middle" dominant-baseline="central"
       font-size="14" font-weight="700" fill="var(--text-primary)">${pct}%</text>
   </svg>`;
+}
+
+// ─── MCP Server Management ──────────────────────────────────────────────────
+
+async function handleMcpAddServer() {
+  const url = dom.mcpServerUrl.value.trim();
+  if (!url) return;
+
+  const name = dom.mcpServerName.value.trim();
+
+  dom.mcpAddBtn.disabled = true;
+  dom.mcpAddBtn.textContent = "Connecting...";
+
+  try {
+    await mcpManager.addServer(url, name, state.corsProxy);
+    dom.mcpServerUrl.value = "";
+    dom.mcpServerName.value = "";
+  } catch (err) {
+    // Error is stored on the server entry — renderMcpServerList will show it
+    // But if it's a duplicate, alert
+    if (err.message.includes("already connected")) {
+      alert(err.message);
+    }
+  }
+
+  dom.mcpAddBtn.disabled = false;
+  dom.mcpAddBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg> Connect Server`;
+
+  renderMcpServerList();
+  renderMcpToolList();
+  updateMcpIndicator();
+}
+
+function renderMcpServerList() {
+  if (!dom.mcpServerList) return;
+
+  const servers = mcpManager.servers;
+  if (servers.length === 0) {
+    dom.mcpServerList.innerHTML = `<div class="mcp-servers-empty">No MCP servers connected</div>`;
+    return;
+  }
+
+  dom.mcpServerList.innerHTML = servers.map(s => {
+    const statusClass = s.status === "connected" ? "mcp-status-ok" : s.status === "error" ? "mcp-status-err" : "mcp-status-pending";
+    const statusDot = s.status === "connected" ? "connected" : s.status === "error" ? "error" : "connecting";
+    const toolCount = s.tools.length;
+
+    let html = `<div class="mcp-server-item ${statusClass}" data-server-id="${s.id}">`;
+    html += `<div class="mcp-server-info">`;
+    html += `<span class="mcp-server-dot mcp-dot-${statusDot}"></span>`;
+    html += `<span class="mcp-server-name">${escapeHtml(s.name)}</span>`;
+    if (s.status === "connected") {
+      html += `<span class="mcp-server-tools">${toolCount} tool${toolCount !== 1 ? "s" : ""}</span>`;
+    }
+    html += `</div>`;
+    html += `<div class="mcp-server-actions">`;
+    if (s.status === "error") {
+      html += `<button class="icon-btn mcp-reconnect" data-server-id="${s.id}" title="Reconnect"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>`;
+    }
+    html += `<button class="icon-btn mcp-remove" data-server-id="${s.id}" title="Disconnect"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>`;
+    html += `</div>`;
+
+    if (s.status === "error" && s.error) {
+      html += `<div class="mcp-server-error">${escapeHtml(s.error)}</div>`;
+    }
+
+    html += `</div>`;
+    return html;
+  }).join("");
+
+  // Attach event listeners
+  dom.mcpServerList.querySelectorAll(".mcp-remove").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      await mcpManager.removeServer(btn.dataset.serverId);
+      renderMcpServerList();
+      renderMcpToolList();
+      updateMcpIndicator();
+    });
+  });
+
+  dom.mcpServerList.querySelectorAll(".mcp-reconnect").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      await mcpManager.reconnectServer(btn.dataset.serverId);
+      renderMcpServerList();
+      renderMcpToolList();
+      updateMcpIndicator();
+    });
+  });
+}
+
+function renderMcpToolList() {
+  if (!dom.mcpToolList || !dom.mcpToolsSection) return;
+
+  const tools = mcpManager.getAllTools();
+  dom.mcpToolCount.textContent = tools.length;
+
+  if (tools.length === 0) {
+    dom.mcpToolsSection.style.display = "none";
+    return;
+  }
+
+  dom.mcpToolsSection.style.display = "";
+
+  dom.mcpToolList.innerHTML = tools.map(t => {
+    let html = `<div class="mcp-tool-item">`;
+    html += `<div class="mcp-tool-name">${escapeHtml(t.name)}</div>`;
+    if (t.description) {
+      html += `<div class="mcp-tool-desc">${escapeHtml(t.description)}</div>`;
+    }
+    html += `<div class="mcp-tool-server">${escapeHtml(t._serverName)}</div>`;
+    html += `</div>`;
+    return html;
+  }).join("");
+}
+
+function updateMcpIndicator() {
+  if (!dom.mcpToolBadge || !dom.mcpIndicator) return;
+
+  const count = mcpManager.totalToolCount();
+  const connected = mcpManager.connectedCount();
+
+  if (count > 0) {
+    dom.mcpToolBadge.textContent = count;
+    dom.mcpIndicator.classList.add("has-tools");
+  } else {
+    dom.mcpToolBadge.textContent = "";
+    dom.mcpIndicator.classList.remove("has-tools");
+  }
+
+  dom.mcpIndicator.classList.toggle("has-connected", connected > 0);
 }
 
 // ─── Boot ───────────────────────────────────────────────────────────────────

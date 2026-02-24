@@ -541,7 +541,7 @@ function buildHeaders(provider, apiKey) {
  * Build the request body and URL for any provider.
  * Returns { url, headers, body } ready for fetch().
  */
-function buildRequest({ provider, model, messages, systemMessage, temperature, maxTokens, topP, stream, corsProxy }) {
+function buildRequest({ provider, model, messages, systemMessage, temperature, maxTokens, topP, stream, corsProxy, mcpTools }) {
   const entry = PROVIDERS[provider];
   const baseURL = getEffectiveBaseURL(provider);
   const apiKey = getApiKey(provider);
@@ -567,6 +567,12 @@ function buildRequest({ provider, model, messages, systemMessage, temperature, m
     ({ url, headers, body } = buildOpenAIRequest(provider, baseURL, model, apiKey, fullMessages, { temperature, maxTokens, topP, stream }));
   }
 
+  // Merge MCP tool definitions into the request body
+  if (mcpTools && mcpTools.length > 0) {
+    const toolFields = toolsToProviderFormat(provider, mcpTools);
+    Object.assign(body, toolFields);
+  }
+
   // Apply per-provider custom headers on top
   const customHdrs = getCustomHeaders(provider);
   if (customHdrs && Object.keys(customHdrs).length > 0) {
@@ -590,7 +596,17 @@ function buildOpenAIRequest(provider, baseURL, model, apiKey, messages, opts) {
 
   const body = {
     model,
-    messages: messages.map(m => ({ role: m.role, content: m.content })),
+    messages: messages.map(m => {
+      // Handle tool-call assistant messages (have tool_calls array)
+      if (m.role === "assistant" && m.tool_calls) {
+        return { role: "assistant", content: m.content, tool_calls: m.tool_calls };
+      }
+      // Handle tool result messages
+      if (m.role === "tool" && m.tool_call_id) {
+        return { role: "tool", tool_call_id: m.tool_call_id, content: m.content };
+      }
+      return { role: m.role, content: m.content };
+    }),
   };
 
   if (opts.stream) body.stream = true;
@@ -626,11 +642,12 @@ function buildAnthropicRequest(baseURL, model, apiKey, messages, opts) {
     }
   }
 
-  // Convert messages — merge adjacent same-role
+  // Convert messages — merge adjacent same-role, handle structured content
   const converted = [];
   for (const msg of nonSystem) {
     const role = msg.role === "tool" ? "user" : (msg.role === "assistant" ? "assistant" : "user");
-    const content = msg.content;
+    // If content is already an array (structured: tool_use or tool_result blocks), keep as-is
+    const content = Array.isArray(msg.content) ? msg.content : msg.content;
     const last = converted[converted.length - 1];
 
     if (last && last.role === role) {
@@ -640,6 +657,8 @@ function buildAnthropicRequest(baseURL, model, apiKey, messages, opts) {
       }
       if (typeof content === "string") {
         last.content.push({ type: "text", text: content });
+      } else if (Array.isArray(content)) {
+        last.content.push(...content);
       }
     } else {
       converted.push({ role, content });
@@ -682,10 +701,14 @@ function buildGeminiRequest(baseURL, model, apiKey, messages, opts) {
   }
 
   // Convert messages to Gemini contents
-  const contents = nonSystem.map(msg => ({
-    role: msg.role === "assistant" ? "model" : "user",
-    parts: [{ text: msg.content }],
-  }));
+  const contents = nonSystem.map(msg => {
+    const role = msg.role === "assistant" ? "model" : "user";
+    // Handle structured Gemini tool messages
+    if (msg._isGeminiToolCall || msg._isGeminiToolResult) {
+      return { role, parts: msg.content };
+    }
+    return { role, parts: [{ text: msg.content || "" }] };
+  });
 
   const body = { contents };
 
@@ -789,6 +812,12 @@ async function* parseOpenAIStream(reader) {
         if (delta?.content) {
           yield { type: "delta", text: delta.content };
         }
+        // Tool call deltas (OpenAI streams tool calls incrementally)
+        if (delta?.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            yield { type: "tool_call_delta", index: tc.index, id: tc.id, name: tc.function?.name, arguments: tc.function?.arguments };
+          }
+        }
         // Check for finish reason
         if (data.choices?.[0]?.finish_reason) {
           yield { type: "finish", reason: data.choices[0].finish_reason };
@@ -831,9 +860,24 @@ async function* parseAnthropicStream(reader) {
         const data = JSON.parse(trimmed.slice(6));
 
         switch (data.type) {
+          case "content_block_start":
+            // Anthropic sends content_block_start for tool_use blocks
+            if (data.content_block?.type === "tool_use") {
+              yield {
+                type: "tool_call_start",
+                index: data.index,
+                id: data.content_block.id,
+                name: data.content_block.name,
+              };
+            }
+            break;
           case "content_block_delta":
             if (data.delta?.type === "text_delta" && data.delta.text) {
               yield { type: "delta", text: data.delta.text };
+            }
+            // Tool input JSON deltas
+            if (data.delta?.type === "input_json_delta" && data.delta.partial_json) {
+              yield { type: "tool_call_delta", index: data.index, arguments: data.delta.partial_json };
             }
             break;
           case "message_delta":
@@ -896,6 +940,14 @@ async function* parseGeminiStream(reader) {
             if (part.text) {
               yield { type: "delta", text: part.text };
             }
+            // Gemini function calls come as complete objects in stream chunks
+            if (part.functionCall) {
+              yield {
+                type: "tool_call_complete",
+                name: part.functionCall.name,
+                arguments: JSON.stringify(part.functionCall.args || {}),
+              };
+            }
           }
         }
 
@@ -924,6 +976,210 @@ function getStreamParser(provider) {
   if (entry.transform === "anthropic") return parseAnthropicStream;
   if (entry.transform === "google") return parseGeminiStream;
   return parseOpenAIStream;
+}
+
+// ─── MCP Tool-Use Transforms ────────────────────────────────────────────────
+
+/**
+ * Convert MCP tool definitions to the provider-specific wire format.
+ * @param {string} provider  Provider ID
+ * @param {Array} mcpTools   Tools from mcpManager.getAllTools()
+ * @returns {object}  Provider-specific tool fields to merge into the request body
+ */
+function toolsToProviderFormat(provider, mcpTools) {
+  if (!mcpTools || mcpTools.length === 0) return {};
+  const entry = PROVIDERS[provider];
+
+  if (entry.transform === "anthropic") {
+    return {
+      tools: mcpTools.map(t => ({
+        name: t.name,
+        description: t.description || "",
+        input_schema: t.inputSchema || { type: "object", properties: {} },
+      })),
+    };
+  }
+
+  if (entry.transform === "google") {
+    return {
+      tools: [{
+        functionDeclarations: mcpTools.map(t => ({
+          name: t.name,
+          description: t.description || "",
+          parameters: t.inputSchema || { type: "object", properties: {} },
+        })),
+      }],
+    };
+  }
+
+  // OpenAI-compatible
+  return {
+    tools: mcpTools.map(t => ({
+      type: "function",
+      function: {
+        name: t.name,
+        description: t.description || "",
+        parameters: t.inputSchema || { type: "object", properties: {} },
+      },
+    })),
+  };
+}
+
+/**
+ * Parse tool calls from a non-streaming provider response.
+ * @param {string} provider  Provider ID
+ * @param {object} data      Raw response JSON
+ * @returns {Array|null}  Array of {id, name, arguments} or null if no tool calls
+ */
+function parseToolCalls(provider, data) {
+  const entry = PROVIDERS[provider];
+
+  if (entry.transform === "anthropic") {
+    const content = data.content || [];
+    const toolUseBlocks = content.filter(b => b.type === "tool_use");
+    if (toolUseBlocks.length === 0) return null;
+    return toolUseBlocks.map(b => ({
+      id: b.id,
+      name: b.name,
+      arguments: typeof b.input === "string" ? b.input : JSON.stringify(b.input),
+    }));
+  }
+
+  if (entry.transform === "google") {
+    const parts = data.candidates?.[0]?.content?.parts || [];
+    const funcCalls = parts.filter(p => p.functionCall);
+    if (funcCalls.length === 0) return null;
+    return funcCalls.map((p, i) => ({
+      id: `gemini_call_${i}`,
+      name: p.functionCall.name,
+      arguments: typeof p.functionCall.args === "string"
+        ? p.functionCall.args
+        : JSON.stringify(p.functionCall.args || {}),
+    }));
+  }
+
+  // OpenAI-compatible
+  const toolCalls = data.choices?.[0]?.message?.tool_calls;
+  if (!toolCalls || toolCalls.length === 0) return null;
+  return toolCalls.map(tc => ({
+    id: tc.id,
+    name: tc.function?.name || tc.name,
+    arguments: typeof tc.function?.arguments === "object"
+      ? JSON.stringify(tc.function.arguments)
+      : (tc.function?.arguments || "{}"),
+  }));
+}
+
+/**
+ * Parse tool calls from a streaming response.
+ * For streaming, tool calls are accumulated from deltas.
+ * Returns the same format as parseToolCalls.
+ */
+function parseStreamingToolCalls(provider, accumulated) {
+  // `accumulated` is the full set of accumulated tool_calls from stream deltas
+  // Already normalized by the streaming parsers below
+  if (!accumulated || accumulated.length === 0) return null;
+  return accumulated;
+}
+
+/**
+ * Build messages to send tool results back to the LLM.
+ * @param {string} provider     Provider ID
+ * @param {Array} toolCalls     The tool calls [{id, name, arguments}]
+ * @param {Array} toolResults   The results [{callId, name, content, isError}]
+ * @returns {Array}  Messages to append to the conversation
+ */
+function buildToolResultMessages(provider, toolCalls, toolResults) {
+  const entry = PROVIDERS[provider];
+
+  if (entry.transform === "anthropic") {
+    // Anthropic: assistant message with tool_use blocks, then user message with tool_result blocks
+    const assistantContent = toolCalls.map(tc => ({
+      type: "tool_use",
+      id: tc.id,
+      name: tc.name,
+      input: safeParseJSON(tc.arguments),
+    }));
+
+    const userContent = toolResults.map(tr => ({
+      type: "tool_result",
+      tool_use_id: tr.callId,
+      content: tr.content,
+      is_error: tr.isError || false,
+    }));
+
+    return [
+      { role: "assistant", content: assistantContent },
+      { role: "user", content: userContent },
+    ];
+  }
+
+  if (entry.transform === "google") {
+    // Gemini: model message with functionCall parts, then user message with functionResponse parts
+    const modelParts = toolCalls.map(tc => ({
+      functionCall: {
+        name: tc.name,
+        args: safeParseJSON(tc.arguments),
+      },
+    }));
+
+    const userParts = toolResults.map(tr => ({
+      functionResponse: {
+        name: tr.name,
+        response: { result: tr.content },
+      },
+    }));
+
+    return [
+      { role: "assistant", content: modelParts, _isGeminiToolCall: true },
+      { role: "user", content: userParts, _isGeminiToolResult: true },
+    ];
+  }
+
+  // OpenAI-compatible: assistant message with tool_calls, then one tool message per result
+  const assistantMsg = {
+    role: "assistant",
+    content: null,
+    tool_calls: toolCalls.map(tc => ({
+      id: tc.id,
+      type: "function",
+      function: {
+        name: tc.name,
+        arguments: tc.arguments,
+      },
+    })),
+  };
+
+  const toolMsgs = toolResults.map(tr => ({
+    role: "tool",
+    tool_call_id: tr.callId,
+    content: tr.content,
+  }));
+
+  return [assistantMsg, ...toolMsgs];
+}
+
+/** Safely parse a JSON string; return the original value if already an object. */
+function safeParseJSON(str) {
+  if (typeof str !== "string") return str;
+  try { return JSON.parse(str); } catch { return str; }
+}
+
+/**
+ * Extract text content from an MCP tool result.
+ * @param {object} result  { content: [...], isError?: boolean }
+ * @returns {string}
+ */
+function mcpResultToText(result) {
+  if (!result || !result.content) return "";
+  return result.content
+    .map(c => {
+      if (c.type === "text") return c.text;
+      if (c.type === "image") return "[image]";
+      if (c.type === "resource") return c.resource?.text || "[resource]";
+      return JSON.stringify(c);
+    })
+    .join("\n");
 }
 
 /**
