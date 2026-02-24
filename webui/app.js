@@ -23,6 +23,7 @@ const state = {
   modality: "chat",
   comboboxOpen: false,
   hlIndex: -1,
+  attachments: [],  // { id, file, type, name, size, dataUrl, mimeType }
 };
 
 // ─── DOM Elements ───────────────────────────────────────────────────────────
@@ -80,6 +81,10 @@ const dom = {
   settingsProviderLabel: $("#settings-provider-label"),
   apiKeyStatus: $("#api-key-status"),
   keyStatusDot: $("#key-status-dot"),
+  // File upload
+  uploadBtn: $("#upload-btn"),
+  fileInput: $("#file-input"),
+  attachmentPreview: $("#attachment-preview"),
   // MCP
   mcpIndicator: $("#mcp-indicator"),
   mcpToolBadge: $("#mcp-tool-badge"),
@@ -290,6 +295,29 @@ function setupEventListeners() {
     tab.addEventListener("click", () => {
       switchSettingsTab(tab.dataset.tab);
     });
+  });
+
+  // File upload
+  dom.uploadBtn.addEventListener("click", () => dom.fileInput.click());
+  dom.fileInput.addEventListener("change", handleFileSelect);
+
+  // Drag-and-drop on the input area
+  const inputArea = dom.userInput.closest(".input-area");
+  inputArea.addEventListener("dragover", (e) => { e.preventDefault(); inputArea.classList.add("drag-over"); });
+  inputArea.addEventListener("dragleave", () => inputArea.classList.remove("drag-over"));
+  inputArea.addEventListener("drop", (e) => {
+    e.preventDefault();
+    inputArea.classList.remove("drag-over");
+    if (e.dataTransfer.files.length > 0) addFiles(e.dataTransfer.files);
+  });
+
+  // Paste images from clipboard
+  dom.userInput.addEventListener("paste", (e) => {
+    const files = [];
+    for (const item of e.clipboardData.items) {
+      if (item.kind === "file") files.push(item.getAsFile());
+    }
+    if (files.length > 0) addFiles(files);
   });
 
   // MCP
@@ -930,7 +958,13 @@ function exportChat() {
   const lines = [`# ${chat.title}`, `Provider: ${chat.provider} | Model: ${chat.model}`, ""];
   for (const msg of chat.messages) {
     lines.push(`## ${msg.role.charAt(0).toUpperCase() + msg.role.slice(1)}`);
-    lines.push(msg.content);
+    const text = typeof msg.content === "string"
+      ? msg.content
+      : (Array.isArray(msg.content) ? msg.content.filter(p => p.type === "text").map(p => p.text).join("\n") : String(msg.content || ""));
+    if (msg._attachments) {
+      lines.push(`Attachments: ${msg._attachments.map(a => a.name).join(", ")}`);
+    }
+    lines.push(text);
     lines.push("");
   }
 
@@ -1008,6 +1042,24 @@ function renderMessage(msg, index) {
     avatar = isUser ? "U" : "A";
   }
 
+  // Build attachment gallery for user messages
+  let attachmentHtml = "";
+  if (isUser && msg._attachments && msg._attachments.length > 0) {
+    attachmentHtml = `<div class="message-attachments">`;
+    for (const a of msg._attachments) {
+      if (a.type === "image" && a.dataUrl) {
+        attachmentHtml += `<img class="message-attachment-img" src="${a.dataUrl}" alt="${escapeAttr(a.name)}" title="${escapeAttr(a.name)}" onclick="window.open(this.src,'_blank')">`;
+      } else {
+        const ext = a.name.split(".").pop()?.toUpperCase() || "FILE";
+        attachmentHtml += `<div class="message-attachment-file">
+          <span class="message-attachment-file-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>
+          ${escapeHtml(a.name)} <span class="muted">(${formatFileSize(a.size)})</span>
+        </div>`;
+      }
+    }
+    attachmentHtml += `</div>`;
+  }
+
   // Build content
   let content;
   if (isToolCall && msg._toolCallData) {
@@ -1027,7 +1079,11 @@ function renderMessage(msg, index) {
       return `<div class="tool-result-block ${cls}"><div class="tool-result-name">${escapeHtml(r.name)}</div><div class="tool-result-content">${renderMarkdown(r.content)}</div></div>`;
     }).join("");
   } else {
-    content = renderMarkdown(msg.content);
+    // Extract text for display — content may be a string or an array of content parts
+    const displayText = typeof msg.content === "string"
+      ? msg.content
+      : (Array.isArray(msg.content) ? msg.content.filter(p => p.type === "text").map(p => p.text).join("\n") : "");
+    content = renderMarkdown(displayText);
   }
 
   let meta = "";
@@ -1038,7 +1094,7 @@ function renderMessage(msg, index) {
   return `
     <div class="message ${roleClass}" data-index="${index}">
       <div class="message-avatar">${avatar}</div>
-      <div class="message-body">${content}${meta}</div>
+      <div class="message-body">${attachmentHtml}${content}${meta}</div>
     </div>`;
 }
 
@@ -1108,6 +1164,14 @@ function buildTokenMeta(usage) {
 function fmtNum(n) {
   if (n == null) return "0";
   return n.toLocaleString();
+}
+
+/** Format file sizes: 1024 -> "1.0 KB", 1048576 -> "1.0 MB" */
+function formatFileSize(bytes) {
+  if (bytes == null) return "";
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+  return (bytes / (1024 * 1024)).toFixed(1) + " MB";
 }
 
 function renderMarkdown(text) {
@@ -1256,11 +1320,135 @@ function finalizeStreamingMessage(msgEl, text, usage) {
   scrollToBottom();
 }
 
+// ─── File Upload ────────────────────────────────────────────────────────
+
+const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+const PDF_TYPE = "application/pdf";
+const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
+
+function handleFileSelect(e) {
+  addFiles(e.target.files);
+  // Reset so the same file can be re-selected
+  dom.fileInput.value = "";
+}
+
+function addFiles(fileList) {
+  for (const file of fileList) {
+    if (file.size > MAX_FILE_SIZE) {
+      alert(`File "${file.name}" exceeds the 20 MB limit.`);
+      continue;
+    }
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const isImage = IMAGE_TYPES.includes(file.type);
+    const isPdf = file.type === PDF_TYPE;
+    const entry = { id, file, name: file.name, size: file.size, mimeType: file.type, type: isImage ? "image" : isPdf ? "pdf" : "text", dataUrl: null };
+    state.attachments.push(entry);
+
+    // Read file
+    const reader = new FileReader();
+    if (isImage || isPdf) {
+      reader.onload = () => { entry.dataUrl = reader.result; renderAttachmentPreview(); };
+      reader.readAsDataURL(file);
+    } else {
+      reader.onload = () => { entry.dataUrl = reader.result; renderAttachmentPreview(); };
+      reader.readAsText(file);
+    }
+  }
+  renderAttachmentPreview();
+}
+
+function removeAttachment(id) {
+  state.attachments = state.attachments.filter(a => a.id !== id);
+  renderAttachmentPreview();
+}
+
+function clearAttachments() {
+  state.attachments = [];
+  renderAttachmentPreview();
+}
+
+function renderAttachmentPreview() {
+  if (state.attachments.length === 0) {
+    dom.attachmentPreview.style.display = "none";
+    dom.uploadBtn.classList.remove("has-attachments");
+    return;
+  }
+
+  dom.attachmentPreview.style.display = "flex";
+  dom.uploadBtn.classList.add("has-attachments");
+
+  dom.attachmentPreview.innerHTML = state.attachments.map(a => {
+    const thumb = a.type === "image" && a.dataUrl
+      ? `<img class="attachment-pill-thumb" src="${a.dataUrl}" alt="${escapeAttr(a.name)}">`
+      : `<div class="attachment-pill-icon">${getFileExt(a.name)}</div>`;
+    return `<div class="attachment-pill" data-attachment-id="${a.id}">
+      ${thumb}
+      <span class="attachment-pill-name" title="${escapeAttr(a.name)}">${escapeHtml(a.name)}</span>
+      <button class="attachment-pill-remove" title="Remove" data-attachment-id="${a.id}">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>`;
+  }).join("");
+
+  dom.attachmentPreview.querySelectorAll(".attachment-pill-remove").forEach(btn => {
+    btn.addEventListener("click", () => removeAttachment(btn.dataset.attachmentId));
+  });
+}
+
+function getFileExt(name) {
+  const dot = name.lastIndexOf(".");
+  return dot >= 0 ? name.slice(dot + 1).slice(0, 4) : "file";
+}
+
+/**
+ * Build content parts from text + attachments for the API message.
+ * Returns either a string (text only) or an array of content parts (multimodal).
+ */
+function buildUserContent(text, attachments) {
+  if (!attachments || attachments.length === 0) return text;
+
+  const parts = [];
+
+  for (const a of attachments) {
+    if (a.type === "image" && a.dataUrl) {
+      parts.push({ type: "image_url", image_url: { url: a.dataUrl, detail: "auto" } });
+    } else if (a.type === "pdf" && a.dataUrl) {
+      // PDFs: send as a document source for providers that support it (OpenAI, Anthropic, Gemini).
+      // We include both a file content part and a text note for providers that don't understand it.
+      parts.push({
+        type: "file",
+        file: { filename: a.name, data: a.dataUrl },
+      });
+    } else if (a.dataUrl) {
+      // Text file: inject content as a text block
+      parts.push({ type: "text", text: `[File: ${a.name}]\n\`\`\`\n${a.dataUrl}\n\`\`\`` });
+    }
+  }
+
+  if (text) parts.push({ type: "text", text });
+
+  return parts;
+}
+
+/**
+ * Format attachment metadata stored on a user message for later re-rendering.
+ */
+function buildAttachmentMeta(attachments) {
+  return attachments.map(a => ({
+    id: a.id,
+    name: a.name,
+    type: a.type,
+    mimeType: a.mimeType,
+    size: a.size,
+    dataUrl: a.type === "image" ? a.dataUrl : null, // only store data URLs for images
+  }));
+}
+
 // ─── Send Message ───────────────────────────────────────────────────────────
 
 async function sendMessage() {
   const text = dom.userInput.value.trim();
-  if (!text || state.isGenerating) return;
+  if ((!text && state.attachments.length === 0) || state.isGenerating) return;
 
   // Ensure we have an active chat
   if (!state.activeChatId) {
@@ -1274,17 +1462,27 @@ async function sendMessage() {
   chat.provider = state.provider;
   chat.model = state.model;
 
-  // Add user message
-  chat.messages.push({ role: "user", content: text });
+  // Build content (multimodal if attachments present)
+  const currentAttachments = [...state.attachments];
+  const content = buildUserContent(text, currentAttachments);
+
+  // Add user message with optional attachment metadata for rendering
+  const userMsg = { role: "user", content };
+  if (currentAttachments.length > 0) {
+    userMsg._attachments = buildAttachmentMeta(currentAttachments);
+  }
+  chat.messages.push(userMsg);
 
   // Set title from first message
   if (chat.messages.length === 1) {
-    chat.title = text.slice(0, 50) + (text.length > 50 ? "..." : "");
+    const titleText = text || currentAttachments.map(a => a.name).join(", ");
+    chat.title = titleText.slice(0, 50) + (titleText.length > 50 ? "..." : "");
     renderChatList();
   }
 
-  // Clear input
+  // Clear input and attachments
   dom.userInput.value = "";
+  clearAttachments();
   autoResize();
 
   // Render user message
@@ -1391,6 +1589,7 @@ function buildApiMessages(chat) {
   const messages = [];
   for (const msg of chat.messages) {
     if (msg.role === "user") {
+      // content may be a string or an array of content parts (multimodal)
       messages.push({ role: msg.role, content: msg.content });
     } else if (msg.role === "assistant") {
       // Skip assistant messages annotated with _toolCalls — the following
