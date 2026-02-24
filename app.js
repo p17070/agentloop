@@ -20,8 +20,9 @@ const state = {
   activeChatId: null,
   isGenerating: false,
   abortController: null,
-  modelDropdownOpen: false,
-  highlightedModelIndex: -1,
+  modality: "chat",
+  comboboxOpen: false,
+  hlIndex: -1,
 };
 
 // ─── DOM Elements ───────────────────────────────────────────────────────────
@@ -35,14 +36,10 @@ const dom = {
   sidebarOpen: $("#sidebar-open"),
   providerSelect: $("#provider-select"),
   addProviderBtn: $("#add-provider-btn"),
-  modelSelector: $("#model-selector"),
-  modelTrigger: $("#model-trigger"),
-  modelTriggerName: $("#model-trigger-name"),
-  modelTriggerMeta: $("#model-trigger-meta"),
-  modelDropdown: $("#model-dropdown"),
-  modelSearch: $("#model-search"),
-  modelList: $("#model-list"),
-  modelDropdownFooter: $("#model-dropdown-footer"),
+  modelCombobox: $("#model-combobox"),
+  modelInput: $("#model-input"),
+  modalityTabs: $("#modality-tabs"),
+  modelResults: $("#model-results"),
   apiKeyInput: $("#api-key-input"),
   toggleKeyVis: $("#toggle-key-vis"),
   systemMsg: $("#system-msg"),
@@ -127,6 +124,10 @@ function setupEventListeners() {
   dom.providerSelect.addEventListener("change", (e) => {
     state.provider = e.target.value;
     state.model = ""; // Reset model on provider change
+    // If current modality doesn't exist for new provider, fall back to chat
+    if (!providerHasModality(state.provider, state.modality)) {
+      state.modality = "chat";
+    }
     applyProvider(state.provider);
     saveState();
   });
@@ -134,18 +135,29 @@ function setupEventListeners() {
   // Add custom provider button
   dom.addProviderBtn.addEventListener("click", showCustomProviderDialog);
 
-  // Model selector
-  dom.modelTrigger.addEventListener("click", toggleModelDropdown);
-  dom.modelSearch.addEventListener("input", () => {
-    renderModelList();
-    updateCustomModelFooter();
-  });
-  dom.modelSearch.addEventListener("keydown", handleModelSearchKeydown);
+  // Model combobox
+  dom.modelInput.addEventListener("focus", openCombobox);
+  dom.modelInput.addEventListener("input", onModelInputChange);
+  dom.modelInput.addEventListener("keydown", onModelInputKeydown);
 
-  // Close model dropdown on click outside
+  // Modality tabs
+  dom.modalityTabs.addEventListener("click", (e) => {
+    const tab = e.target.closest(".mod-tab");
+    if (!tab) return;
+    state.modality = tab.dataset.mod;
+    state.model = ""; // reset model when switching modality
+    dom.modalityTabs.querySelectorAll(".mod-tab").forEach(t => t.classList.toggle("active", t === tab));
+    updateModalityTabVisibility();
+    renderModelResults();
+    // Set default for new modality
+    const def = getCatalogDefault(state.provider, state.modality);
+    if (def) selectModel(def.id, false);
+  });
+
+  // Close combobox on click outside
   document.addEventListener("click", (e) => {
-    if (state.modelDropdownOpen && !dom.modelSelector.contains(e.target)) {
-      closeModelDropdown();
+    if (state.comboboxOpen && !dom.modelCombobox.contains(e.target)) {
+      closeCombobox();
     }
   });
 
@@ -252,8 +264,8 @@ function handleKeyboardShortcuts(e) {
 
   // Escape: close model dropdown, close sidebar, or blur active input
   if (e.key === "Escape") {
-    if (state.modelDropdownOpen) {
-      closeModelDropdown();
+    if (state.comboboxOpen) {
+      closeCombobox();
       return;
     }
     if (isInput) {
@@ -351,14 +363,14 @@ function applyProvider(provider) {
 
   dom.providerSelect.value = provider;
 
-  // Set model — try catalog default, then provider default, then keep current
+  // Set model — try catalog default for current modality, then provider default
   if (!state.model) {
-    const catDefault = getCatalogDefault(provider);
+    const catDefault = getCatalogDefault(provider, state.modality);
     state.model = catDefault ? catDefault.id : entry.defaultModel;
   }
 
-  // Update model trigger display
-  updateModelTrigger();
+  // Update model display in combobox input
+  displayModelInInput(state.model);
 
   // Load API key
   dom.apiKeyInput.value = getApiKey(provider);
@@ -395,163 +407,137 @@ function updateTopbar() {
   dom.topbarModel.textContent = state.model || entry?.defaultModel || "";
 }
 
-// ─── Model Selector ─────────────────────────────────────────────────────────
+// ─── Model Combobox ─────────────────────────────────────────────────────────
 
-function updateModelTrigger() {
-  const catalogModel = MODEL_CATALOG.find(m => m.provider === state.provider && m.id === state.model);
-  if (catalogModel) {
-    dom.modelTriggerName.textContent = catalogModel.name;
-    dom.modelTriggerMeta.textContent = catalogModel.ctx ? fmtCtx(catalogModel.ctx) : "";
-  } else if (state.model) {
-    dom.modelTriggerName.textContent = state.model;
-    dom.modelTriggerMeta.textContent = "custom";
-  } else {
-    dom.modelTriggerName.textContent = "Select a model";
-    dom.modelTriggerMeta.textContent = "";
+function openCombobox() {
+  if (state.comboboxOpen) return;
+  state.comboboxOpen = true;
+  state.hlIndex = -1;
+  dom.modelCombobox.classList.add("open");
+  updateModalityTabVisibility();
+  renderModelResults();
+}
+
+function closeCombobox() {
+  state.comboboxOpen = false;
+  state.hlIndex = -1;
+  dom.modelCombobox.classList.remove("open");
+  // If input is empty or doesn't match, restore current model display
+  const val = dom.modelInput.value.trim();
+  if (!val && state.model) {
+    displayModelInInput(state.model);
   }
 }
 
-function toggleModelDropdown() {
-  if (state.modelDropdownOpen) {
-    closeModelDropdown();
-  } else {
-    openModelDropdown();
-  }
+function displayModelInInput(modelId) {
+  const cat = MODEL_CATALOG.find(m => m.provider === state.provider && m.id === modelId);
+  dom.modelInput.value = cat ? cat.name : modelId;
 }
 
-function openModelDropdown() {
-  state.modelDropdownOpen = true;
-  state.highlightedModelIndex = -1;
-  dom.modelSelector.classList.add("open");
-  dom.modelSearch.value = "";
-  renderModelList();
-  updateCustomModelFooter();
-
-  // Focus search after animation
-  requestAnimationFrame(() => dom.modelSearch.focus());
-}
-
-function closeModelDropdown() {
-  state.modelDropdownOpen = false;
-  state.highlightedModelIndex = -1;
-  dom.modelSelector.classList.remove("open");
-}
-
-function selectModel(modelId) {
+function selectModel(modelId, close) {
   state.model = modelId;
-  updateModelTrigger();
+  displayModelInInput(modelId);
   updateTopbar();
-  closeModelDropdown();
+  if (close !== false) closeCombobox();
   saveState();
 }
 
-function renderModelList() {
-  const query = dom.modelSearch.value.trim();
-  const models = getModelsForProvider(state.provider, query);
+function onModelInputChange() {
+  state.hlIndex = -1;
+  renderModelResults();
+}
 
-  if (models.length === 0) {
-    dom.modelList.innerHTML = `<div class="model-dropdown-empty">No models found${query ? ` for "${escapeHtml(query)}"` : ""}</div>`;
-    return;
-  }
-
-  const grouped = groupByCategory(models);
-  let html = "";
-
-  for (const [category, categoryModels] of grouped) {
-    const meta = CATEGORY_META[category] || { label: category };
-    html += `<div class="model-group-header">${escapeHtml(meta.label)}</div>`;
-
-    for (const model of categoryModels) {
-      const isSelected = model.id === state.model;
-      const isDefault = model.isDefault;
-      html += `<div class="model-option${isSelected ? " selected" : ""}" data-model-id="${escapeHtml(model.id)}">`;
-      html += `<div class="model-option-info">`;
-      html += `<div class="model-option-name">${escapeHtml(model.name)}</div>`;
-      html += `<div class="model-option-id">${escapeHtml(model.id)}</div>`;
-      html += `</div>`;
-      html += `<div class="model-option-badges">`;
-      if (isDefault) {
-        html += `<span class="model-badge model-badge-default">default</span>`;
-      }
-      if (model.ctx) {
-        html += `<span class="model-badge model-badge-ctx">${fmtCtx(model.ctx)}</span>`;
-      }
-      html += `</div>`;
-      html += `</div>`;
+function onModelInputKeydown(e) {
+  if (!state.comboboxOpen) {
+    if (e.key === "ArrowDown" || e.key === "Enter") {
+      openCombobox();
+      e.preventDefault();
     }
-  }
-
-  dom.modelList.innerHTML = html;
-
-  // Attach click listeners
-  dom.modelList.querySelectorAll(".model-option").forEach(el => {
-    el.addEventListener("click", () => {
-      selectModel(el.dataset.modelId);
-    });
-  });
-}
-
-function updateCustomModelFooter() {
-  const query = dom.modelSearch.value.trim();
-  if (!query) {
-    dom.modelDropdownFooter.innerHTML = "";
     return;
   }
 
-  // Check if query matches an existing model exactly
-  const exactMatch = MODEL_CATALOG.find(m => m.provider === state.provider && m.id === query);
-  if (exactMatch) {
-    dom.modelDropdownFooter.innerHTML = "";
-    return;
-  }
-
-  dom.modelDropdownFooter.innerHTML = `
-    <div class="model-custom-option" id="model-custom-use">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-      Use custom model: <span class="model-custom-id">${escapeHtml(query)}</span>
-    </div>`;
-
-  dom.modelDropdownFooter.querySelector("#model-custom-use").addEventListener("click", () => {
-    selectModel(query);
-  });
-}
-
-function handleModelSearchKeydown(e) {
-  const options = dom.modelList.querySelectorAll(".model-option");
-  const count = options.length;
+  const rows = dom.modelResults.querySelectorAll(".model-row");
+  const count = rows.length;
 
   if (e.key === "ArrowDown") {
     e.preventDefault();
-    state.highlightedModelIndex = Math.min(state.highlightedModelIndex + 1, count - 1);
-    highlightModelOption(options);
+    state.hlIndex = Math.min(state.hlIndex + 1, count - 1);
+    highlightRow(rows);
   } else if (e.key === "ArrowUp") {
     e.preventDefault();
-    state.highlightedModelIndex = Math.max(state.highlightedModelIndex - 1, 0);
-    highlightModelOption(options);
+    state.hlIndex = Math.max(state.hlIndex - 1, 0);
+    highlightRow(rows);
   } else if (e.key === "Enter") {
     e.preventDefault();
-    if (state.highlightedModelIndex >= 0 && state.highlightedModelIndex < count) {
-      const selected = options[state.highlightedModelIndex];
-      selectModel(selected.dataset.modelId);
+    if (state.hlIndex >= 0 && state.hlIndex < count) {
+      selectModel(rows[state.hlIndex].dataset.mid);
     } else {
-      // Use the search query as custom model
-      const query = dom.modelSearch.value.trim();
-      if (query) selectModel(query);
+      // Use typed value as custom model
+      const val = dom.modelInput.value.trim();
+      if (val) selectModel(val);
     }
   } else if (e.key === "Escape") {
-    closeModelDropdown();
+    closeCombobox();
+    dom.modelInput.blur();
+  } else if (e.key === "Tab") {
+    closeCombobox();
   }
 }
 
-function highlightModelOption(options) {
-  options.forEach((el, i) => {
-    el.classList.toggle("highlighted", i === state.highlightedModelIndex);
-  });
-
-  // Scroll into view
-  if (state.highlightedModelIndex >= 0 && options[state.highlightedModelIndex]) {
-    options[state.highlightedModelIndex].scrollIntoView({ block: "nearest" });
+function highlightRow(rows) {
+  rows.forEach((el, i) => el.classList.toggle("hl", i === state.hlIndex));
+  if (state.hlIndex >= 0 && rows[state.hlIndex]) {
+    rows[state.hlIndex].scrollIntoView({ block: "nearest" });
   }
+}
+
+/** Show/hide modality tabs based on what the current provider supports */
+function updateModalityTabVisibility() {
+  const tabs = dom.modalityTabs.querySelectorAll(".mod-tab");
+  tabs.forEach(tab => {
+    const mod = tab.dataset.mod;
+    const has = providerHasModality(state.provider, mod);
+    tab.style.display = has ? "" : "none";
+    tab.classList.toggle("active", mod === state.modality);
+  });
+}
+
+function renderModelResults() {
+  const query = dom.modelInput.value.trim();
+  const models = getModelsForProvider(state.provider, state.modality, query);
+  const customTyped = query && !MODEL_CATALOG.some(m => m.provider === state.provider && m.id === query);
+
+  if (models.length === 0 && !customTyped) {
+    dom.modelResults.innerHTML = `<div class="model-results-empty">No models found${query ? ` for "${escapeHtml(query)}"` : ""}</div>`;
+    return;
+  }
+
+  let html = "";
+  for (const m of models) {
+    const sel = m.id === state.model;
+    html += `<div class="model-row${sel ? " sel" : ""}" data-mid="${escapeAttr(m.id)}">`;
+    html += `<span class="model-row-name">${escapeHtml(m.name)}</span>`;
+    html += `<span class="model-row-right">`;
+    if (m.isDefault) html += `<span class="mtag mtag-default">default</span>`;
+    // Show one capability tag (skip flagship for brevity)
+    const showCat = m.categories.find(c => c !== "flagship" && c !== "image" && c !== "audio" && c !== "tts" && c !== "embedding");
+    if (showCat) html += `<span class="mtag mtag-cap c-${showCat}">${showCat}</span>`;
+    if (m.ctx) html += `<span class="mtag mtag-ctx">${fmtCtx(m.ctx)}</span>`;
+    html += `</span>`;
+    html += `</div>`;
+  }
+
+  // Custom model option at the bottom
+  if (customTyped) {
+    html += `<div class="model-use-custom" data-mid="${escapeAttr(query)}">Use: <code>${escapeHtml(query)}</code></div>`;
+  }
+
+  dom.modelResults.innerHTML = html;
+
+  // Click handlers
+  dom.modelResults.querySelectorAll("[data-mid]").forEach(el => {
+    el.addEventListener("click", () => selectModel(el.dataset.mid));
+  });
 }
 
 // ─── Endpoint Override ──────────────────────────────────────────────────────
@@ -1015,6 +1001,10 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+function escapeAttr(str) {
+  return str.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 function addCopyButtons() {
   dom.messages.querySelectorAll("pre").forEach(pre => {
     // Skip if already has header
@@ -1392,6 +1382,7 @@ function loadState() {
     state.topP = settings.topP ?? 1;
     state.streaming = settings.streaming ?? true;
     state.corsProxy = settings.corsProxy || "";
+    state.modality = settings.modality || "chat";
 
     // Load chats
     const chats = JSON.parse(localStorage.getItem("agentloop_chats") || "[]");
@@ -1413,6 +1404,7 @@ function saveState() {
       topP: state.topP,
       streaming: state.streaming,
       corsProxy: state.corsProxy,
+      modality: state.modality,
     }));
 
     localStorage.setItem("agentloop_chats", JSON.stringify(state.chats));
