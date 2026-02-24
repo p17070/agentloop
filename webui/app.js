@@ -1,7 +1,7 @@
 /**
  * AgentLoop WebUI — Main Application
  *
- * Chat interface with streaming support for 11 LLM providers.
+ * Chat interface with streaming support for 12 LLM providers.
  * BYOK — API keys stored in localStorage, never leave the browser.
  */
 
@@ -16,11 +16,12 @@ const state = {
   topP: 1,
   streaming: true,
   corsProxy: "",
-  customEndpoint: "",
   chats: [],        // { id, title, provider, model, messages[] }
   activeChatId: null,
   isGenerating: false,
   abortController: null,
+  modelDropdownOpen: false,
+  highlightedModelIndex: -1,
 };
 
 // ─── DOM Elements ───────────────────────────────────────────────────────────
@@ -33,9 +34,15 @@ const dom = {
   sidebarClose: $("#sidebar-close"),
   sidebarOpen: $("#sidebar-open"),
   providerSelect: $("#provider-select"),
-  modelInput: $("#model-input"),
-  modelHint: $("#model-hint"),
-  modelSuggestions: $("#model-suggestions"),
+  addProviderBtn: $("#add-provider-btn"),
+  modelSelector: $("#model-selector"),
+  modelTrigger: $("#model-trigger"),
+  modelTriggerName: $("#model-trigger-name"),
+  modelTriggerMeta: $("#model-trigger-meta"),
+  modelDropdown: $("#model-dropdown"),
+  modelSearch: $("#model-search"),
+  modelList: $("#model-list"),
+  modelDropdownFooter: $("#model-dropdown-footer"),
   apiKeyInput: $("#api-key-input"),
   toggleKeyVis: $("#toggle-key-vis"),
   systemMsg: $("#system-msg"),
@@ -47,6 +54,8 @@ const dom = {
   streamToggle: $("#stream-toggle"),
   corsProxy: $("#cors-proxy"),
   customEndpoint: $("#custom-endpoint"),
+  customHeaders: $("#custom-headers"),
+  endpointDefault: $("#endpoint-default"),
   themeToggle: $("#theme-toggle"),
   themeLabel: $("#theme-label"),
   themeIconDark: $("#theme-icon-dark"),
@@ -75,6 +84,7 @@ const dom = {
 
 function init() {
   loadState();
+  rebuildProviderSelect();
   setupEventListeners();
   applyProvider(state.provider);
   updateTheme();
@@ -116,15 +126,27 @@ function setupEventListeners() {
   // Provider change
   dom.providerSelect.addEventListener("change", (e) => {
     state.provider = e.target.value;
+    state.model = ""; // Reset model on provider change
     applyProvider(state.provider);
     saveState();
   });
 
-  // Model input
-  dom.modelInput.addEventListener("input", (e) => {
-    state.model = e.target.value;
-    updateTopbar();
-    saveState();
+  // Add custom provider button
+  dom.addProviderBtn.addEventListener("click", showCustomProviderDialog);
+
+  // Model selector
+  dom.modelTrigger.addEventListener("click", toggleModelDropdown);
+  dom.modelSearch.addEventListener("input", () => {
+    renderModelList();
+    updateCustomModelFooter();
+  });
+  dom.modelSearch.addEventListener("keydown", handleModelSearchKeydown);
+
+  // Close model dropdown on click outside
+  document.addEventListener("click", (e) => {
+    if (state.modelDropdownOpen && !dom.modelSelector.contains(e.target)) {
+      closeModelDropdown();
+    }
   });
 
   // API key input
@@ -176,10 +198,14 @@ function setupEventListeners() {
     saveState();
   });
 
-  // Custom endpoint
-  dom.customEndpoint.addEventListener("input", (e) => {
-    state.customEndpoint = e.target.value;
-    saveState();
+  // Custom endpoint (per-provider)
+  dom.customEndpoint.addEventListener("change", (e) => {
+    saveCurrentEndpointOverride();
+  });
+
+  // Custom headers (per-provider)
+  dom.customHeaders.addEventListener("change", (e) => {
+    saveCurrentEndpointOverride();
   });
 
   // Theme toggle
@@ -224,8 +250,12 @@ function handleKeyboardShortcuts(e) {
   // Don't fire shortcuts when typing in inputs (except Escape)
   const isInput = e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT";
 
-  // Escape: close sidebar on mobile, or blur active input
+  // Escape: close model dropdown, close sidebar, or blur active input
   if (e.key === "Escape") {
+    if (state.modelDropdownOpen) {
+      closeModelDropdown();
+      return;
+    }
     if (isInput) {
       e.target.blur();
       return;
@@ -293,22 +323,42 @@ function toggleSidebar(open) {
 
 // ─── Provider Handling ──────────────────────────────────────────────────────
 
+/** Rebuild the provider <select> to include custom providers */
+function rebuildProviderSelect() {
+  const builtInProviders = ["openai", "anthropic", "google", "groq", "together", "mistral", "deepseek", "fireworks", "perplexity", "cohere", "xai", "ollama"];
+  const customProviders = Object.keys(PROVIDERS).filter(id => PROVIDERS[id].isCustom);
+
+  let html = "";
+  for (const id of builtInProviders) {
+    const p = PROVIDERS[id];
+    if (p) html += `<option value="${id}">${p.name}</option>`;
+  }
+
+  if (customProviders.length > 0) {
+    html += `<optgroup label="Custom Providers">`;
+    for (const id of customProviders) {
+      html += `<option value="${id}">${PROVIDERS[id].name}</option>`;
+    }
+    html += `</optgroup>`;
+  }
+
+  dom.providerSelect.innerHTML = html;
+}
+
 function applyProvider(provider) {
   const entry = PROVIDERS[provider];
   if (!entry) return;
 
   dom.providerSelect.value = provider;
 
-  // Set model
-  if (!state.model || !entry.models.includes(state.model)) {
-    state.model = entry.defaultModel;
+  // Set model — try catalog default, then provider default, then keep current
+  if (!state.model) {
+    const catDefault = getCatalogDefault(provider);
+    state.model = catDefault ? catDefault.id : entry.defaultModel;
   }
-  dom.modelInput.value = state.model;
-  dom.modelInput.placeholder = entry.defaultModel;
 
-  // Model suggestions — populate datalist and hint
-  dom.modelSuggestions.innerHTML = entry.models.map(m => `<option value="${m}">`).join("");
-  dom.modelHint.textContent = entry.models.slice(0, 4).join(", ");
+  // Update model trigger display
+  updateModelTrigger();
 
   // Load API key
   dom.apiKeyInput.value = getApiKey(provider);
@@ -328,7 +378,13 @@ function applyProvider(provider) {
   dom.topPValue.textContent = state.topP.toFixed(2);
   dom.streamToggle.checked = state.streaming;
   dom.corsProxy.value = state.corsProxy;
-  dom.customEndpoint.value = state.customEndpoint;
+
+  // Endpoint configuration
+  dom.endpointDefault.textContent = entry.baseURL;
+  const overrides = loadEndpointOverrides();
+  const override = overrides[provider] || {};
+  dom.customEndpoint.value = override.baseURL || "";
+  dom.customHeaders.value = override.headers ? JSON.stringify(override.headers, null, 2) : "";
 
   updateTopbar();
 }
@@ -337,6 +393,298 @@ function updateTopbar() {
   const entry = PROVIDERS[state.provider];
   dom.topbarProvider.textContent = entry?.name || state.provider;
   dom.topbarModel.textContent = state.model || entry?.defaultModel || "";
+}
+
+// ─── Model Selector ─────────────────────────────────────────────────────────
+
+function updateModelTrigger() {
+  const catalogModel = MODEL_CATALOG.find(m => m.provider === state.provider && m.id === state.model);
+  if (catalogModel) {
+    dom.modelTriggerName.textContent = catalogModel.name;
+    dom.modelTriggerMeta.textContent = catalogModel.ctx ? fmtCtx(catalogModel.ctx) : "";
+  } else if (state.model) {
+    dom.modelTriggerName.textContent = state.model;
+    dom.modelTriggerMeta.textContent = "custom";
+  } else {
+    dom.modelTriggerName.textContent = "Select a model";
+    dom.modelTriggerMeta.textContent = "";
+  }
+}
+
+function toggleModelDropdown() {
+  if (state.modelDropdownOpen) {
+    closeModelDropdown();
+  } else {
+    openModelDropdown();
+  }
+}
+
+function openModelDropdown() {
+  state.modelDropdownOpen = true;
+  state.highlightedModelIndex = -1;
+  dom.modelSelector.classList.add("open");
+  dom.modelSearch.value = "";
+  renderModelList();
+  updateCustomModelFooter();
+
+  // Focus search after animation
+  requestAnimationFrame(() => dom.modelSearch.focus());
+}
+
+function closeModelDropdown() {
+  state.modelDropdownOpen = false;
+  state.highlightedModelIndex = -1;
+  dom.modelSelector.classList.remove("open");
+}
+
+function selectModel(modelId) {
+  state.model = modelId;
+  updateModelTrigger();
+  updateTopbar();
+  closeModelDropdown();
+  saveState();
+}
+
+function renderModelList() {
+  const query = dom.modelSearch.value.trim();
+  const models = getModelsForProvider(state.provider, query);
+
+  if (models.length === 0) {
+    dom.modelList.innerHTML = `<div class="model-dropdown-empty">No models found${query ? ` for "${escapeHtml(query)}"` : ""}</div>`;
+    return;
+  }
+
+  const grouped = groupByCategory(models);
+  let html = "";
+
+  for (const [category, categoryModels] of grouped) {
+    const meta = CATEGORY_META[category] || { label: category };
+    html += `<div class="model-group-header">${escapeHtml(meta.label)}</div>`;
+
+    for (const model of categoryModels) {
+      const isSelected = model.id === state.model;
+      const isDefault = model.isDefault;
+      html += `<div class="model-option${isSelected ? " selected" : ""}" data-model-id="${escapeHtml(model.id)}">`;
+      html += `<div class="model-option-info">`;
+      html += `<div class="model-option-name">${escapeHtml(model.name)}</div>`;
+      html += `<div class="model-option-id">${escapeHtml(model.id)}</div>`;
+      html += `</div>`;
+      html += `<div class="model-option-badges">`;
+      if (isDefault) {
+        html += `<span class="model-badge model-badge-default">default</span>`;
+      }
+      if (model.ctx) {
+        html += `<span class="model-badge model-badge-ctx">${fmtCtx(model.ctx)}</span>`;
+      }
+      html += `</div>`;
+      html += `</div>`;
+    }
+  }
+
+  dom.modelList.innerHTML = html;
+
+  // Attach click listeners
+  dom.modelList.querySelectorAll(".model-option").forEach(el => {
+    el.addEventListener("click", () => {
+      selectModel(el.dataset.modelId);
+    });
+  });
+}
+
+function updateCustomModelFooter() {
+  const query = dom.modelSearch.value.trim();
+  if (!query) {
+    dom.modelDropdownFooter.innerHTML = "";
+    return;
+  }
+
+  // Check if query matches an existing model exactly
+  const exactMatch = MODEL_CATALOG.find(m => m.provider === state.provider && m.id === query);
+  if (exactMatch) {
+    dom.modelDropdownFooter.innerHTML = "";
+    return;
+  }
+
+  dom.modelDropdownFooter.innerHTML = `
+    <div class="model-custom-option" id="model-custom-use">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+      Use custom model: <span class="model-custom-id">${escapeHtml(query)}</span>
+    </div>`;
+
+  dom.modelDropdownFooter.querySelector("#model-custom-use").addEventListener("click", () => {
+    selectModel(query);
+  });
+}
+
+function handleModelSearchKeydown(e) {
+  const options = dom.modelList.querySelectorAll(".model-option");
+  const count = options.length;
+
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    state.highlightedModelIndex = Math.min(state.highlightedModelIndex + 1, count - 1);
+    highlightModelOption(options);
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    state.highlightedModelIndex = Math.max(state.highlightedModelIndex - 1, 0);
+    highlightModelOption(options);
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    if (state.highlightedModelIndex >= 0 && state.highlightedModelIndex < count) {
+      const selected = options[state.highlightedModelIndex];
+      selectModel(selected.dataset.modelId);
+    } else {
+      // Use the search query as custom model
+      const query = dom.modelSearch.value.trim();
+      if (query) selectModel(query);
+    }
+  } else if (e.key === "Escape") {
+    closeModelDropdown();
+  }
+}
+
+function highlightModelOption(options) {
+  options.forEach((el, i) => {
+    el.classList.toggle("highlighted", i === state.highlightedModelIndex);
+  });
+
+  // Scroll into view
+  if (state.highlightedModelIndex >= 0 && options[state.highlightedModelIndex]) {
+    options[state.highlightedModelIndex].scrollIntoView({ block: "nearest" });
+  }
+}
+
+// ─── Endpoint Override ──────────────────────────────────────────────────────
+
+function saveCurrentEndpointOverride() {
+  const baseURL = dom.customEndpoint.value.trim();
+  let headers = {};
+  const headersStr = dom.customHeaders.value.trim();
+  if (headersStr) {
+    try {
+      headers = JSON.parse(headersStr);
+    } catch {
+      // Invalid JSON — ignore
+    }
+  }
+  setEndpointOverride(state.provider, baseURL, headers);
+}
+
+// ─── Custom Provider Dialog ─────────────────────────────────────────────────
+
+function showCustomProviderDialog(editId) {
+  // Remove any existing dialog
+  const existing = document.querySelector(".confirm-overlay");
+  if (existing) existing.remove();
+
+  const isEdit = typeof editId === "string" && PROVIDERS[editId]?.isCustom;
+  const editConfig = isEdit ? loadCustomProviders()[editId] : null;
+
+  const overlay = document.createElement("div");
+  overlay.className = "confirm-overlay";
+  overlay.innerHTML = `
+    <div class="custom-provider-dialog">
+      <h3>${isEdit ? "Edit" : "Add"} Custom Provider</h3>
+      <div class="custom-provider-form">
+        <div class="form-row">
+          <label for="cp-name">Provider Name</label>
+          <input type="text" id="cp-name" placeholder="My Local LLM" value="${isEdit ? escapeHtml(editConfig.name) : ""}">
+        </div>
+        <div class="form-row">
+          <label for="cp-url">Base URL</label>
+          <input type="text" id="cp-url" placeholder="http://localhost:8080/v1" value="${isEdit ? escapeHtml(editConfig.baseURL) : ""}">
+          <div class="hint">The API base URL (e.g. http://localhost:11434/v1 for Ollama)</div>
+        </div>
+        <div class="form-row">
+          <label for="cp-format">API Format</label>
+          <select id="cp-format">
+            <option value=""${!editConfig?.transform ? " selected" : ""}>OpenAI-Compatible</option>
+            <option value="anthropic"${editConfig?.transform === "anthropic" ? " selected" : ""}>Anthropic</option>
+            <option value="google"${editConfig?.transform === "google" ? " selected" : ""}>Google Gemini</option>
+          </select>
+          <div class="hint">Most local servers (Ollama, vLLM, LM Studio, llama.cpp) use OpenAI format.</div>
+        </div>
+        <div class="form-row">
+          <label for="cp-auth">Authentication</label>
+          <select id="cp-auth">
+            <option value="bearer"${(!editConfig?.auth || editConfig?.auth === "bearer") ? " selected" : ""}>Bearer Token</option>
+            <option value="x-api-key"${editConfig?.auth === "x-api-key" ? " selected" : ""}>X-API-Key</option>
+            <option value="none"${editConfig?.auth === "none" ? " selected" : ""}>None</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="cp-default-model">Default Model</label>
+          <input type="text" id="cp-default-model" placeholder="e.g. llama3.2" value="${isEdit && editConfig?.defaultModel ? escapeHtml(editConfig.defaultModel) : ""}">
+          <div class="hint">The model ID to use by default.</div>
+        </div>
+        <div class="form-actions">
+          ${isEdit ? `<button class="btn btn-danger" id="cp-delete">Delete</button>` : ""}
+          <button class="btn" id="cp-cancel">Cancel</button>
+          <button class="btn btn-primary" id="cp-save">${isEdit ? "Save" : "Add Provider"}</button>
+        </div>
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+
+  const cancel = () => overlay.remove();
+  overlay.querySelector("#cp-cancel").addEventListener("click", cancel);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) cancel();
+  });
+  overlay.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") cancel();
+  });
+
+  if (isEdit) {
+    overlay.querySelector("#cp-delete").addEventListener("click", () => {
+      removeCustomProvider(editId);
+      rebuildProviderSelect();
+      if (state.provider === editId) {
+        state.provider = "openai";
+        state.model = "";
+        applyProvider("openai");
+      }
+      saveState();
+      overlay.remove();
+    });
+  }
+
+  overlay.querySelector("#cp-save").addEventListener("click", () => {
+    const name = overlay.querySelector("#cp-name").value.trim();
+    const baseURL = overlay.querySelector("#cp-url").value.trim();
+    const transform = overlay.querySelector("#cp-format").value || undefined;
+    const auth = overlay.querySelector("#cp-auth").value;
+    const defaultModel = overlay.querySelector("#cp-default-model").value.trim();
+
+    if (!name || !baseURL) return;
+
+    const config = { name, baseURL, auth, defaultModel, transform, models: defaultModel ? [defaultModel] : [] };
+
+    if (isEdit) {
+      // Update existing
+      const custom = loadCustomProviders();
+      custom[editId] = config;
+      saveCustomProviders(custom);
+      registerCustomProvider(editId, config);
+      rebuildProviderSelect();
+      if (state.provider === editId) {
+        applyProvider(editId);
+      }
+    } else {
+      const id = addCustomProvider(config);
+      rebuildProviderSelect();
+      state.provider = id;
+      state.model = defaultModel || "";
+      applyProvider(id);
+    }
+
+    saveState();
+    overlay.remove();
+  });
+
+  // Focus the name input
+  overlay.querySelector("#cp-name").focus();
 }
 
 // ─── Theme ──────────────────────────────────────────────────────────────────
@@ -534,7 +882,7 @@ function renderMessages() {
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
         </div>
         <h2>AgentLoop Chat</h2>
-        <p>Bring Your Own Key — chat with 11 LLM providers from one interface.</p>
+        <p>Bring Your Own Key — chat with 12 LLM providers from one interface.</p>
         <p class="muted">Select a provider, enter your API key, and start chatting.</p>
       </div>`;
     updateConversationStats();
@@ -845,7 +1193,6 @@ async function sendMessage() {
       topP: state.topP,
       stream: state.streaming,
       corsProxy: state.corsProxy,
-      customEndpoint: state.customEndpoint,
     });
 
     const response = await fetch(url, {
@@ -1045,7 +1392,6 @@ function loadState() {
     state.topP = settings.topP ?? 1;
     state.streaming = settings.streaming ?? true;
     state.corsProxy = settings.corsProxy || "";
-    state.customEndpoint = settings.customEndpoint || "";
 
     // Load chats
     const chats = JSON.parse(localStorage.getItem("agentloop_chats") || "[]");
@@ -1067,7 +1413,6 @@ function saveState() {
       topP: state.topP,
       streaming: state.streaming,
       corsProxy: state.corsProxy,
-      customEndpoint: state.customEndpoint,
     }));
 
     localStorage.setItem("agentloop_chats", JSON.stringify(state.chats));

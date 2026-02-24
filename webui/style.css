@@ -797,6 +797,350 @@ select {
   padding-top: 8px;
 }
 
+/* ─── Provider Select Row ───────────────────────────────────────────────── */
+
+.provider-select-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.provider-select-row select {
+  flex: 1;
+}
+
+.provider-select-row .icon-btn {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  flex-shrink: 0;
+}
+
+/* ─── Model Selector Dropdown ───────────────────────────────────────────── */
+
+.model-selector {
+  position: relative;
+}
+
+.model-selector-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color var(--transition);
+  text-align: left;
+}
+
+.model-selector-trigger:hover {
+  border-color: var(--text-muted);
+}
+
+.model-selector-trigger:focus,
+.model-selector.open .model-selector-trigger {
+  border-color: var(--border-focus);
+  outline: none;
+}
+
+.model-trigger-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-trigger-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+
+.model-trigger-chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform var(--transition);
+}
+
+.model-selector.open .model-trigger-chevron {
+  transform: rotate(180deg);
+}
+
+.model-dropdown {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  z-index: 150;
+  max-height: 360px;
+  flex-direction: column;
+  overflow: hidden;
+  animation: slideDown 150ms ease;
+}
+
+.model-selector.open .model-dropdown {
+  display: flex;
+}
+
+.model-dropdown-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.model-dropdown-search svg {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.model-dropdown-search input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  padding: 2px 0;
+  outline: none;
+}
+
+.model-dropdown-search input::placeholder {
+  color: var(--text-muted);
+}
+
+.model-dropdown-list {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.model-group-header {
+  padding: 6px 10px 4px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  position: sticky;
+  top: 0;
+  background: var(--bg-secondary);
+  z-index: 1;
+}
+
+.model-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+
+.model-option:hover,
+.model-option.highlighted {
+  background: var(--bg-hover);
+}
+
+.model-option.selected {
+  background: var(--accent-bg);
+}
+
+.model-option-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.model-option-name {
+  font-size: 13px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-option-id {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-option-badges {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  align-items: center;
+}
+
+.model-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+
+.model-badge-default {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+}
+
+.model-badge-ctx {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+
+.model-badge-cat {
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  color: var(--warning);
+}
+
+.model-badge-cat.cat-flagship { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.model-badge-cat.cat-fast { color: var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); }
+.model-badge-cat.cat-reasoning { color: #a78bfa; background: color-mix(in srgb, #a78bfa 12%, transparent); }
+.model-badge-cat.cat-code { color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); }
+.model-badge-cat.cat-vision { color: #ec4899; background: color-mix(in srgb, #ec4899 12%, transparent); }
+.model-badge-cat.cat-search { color: #06b6d4; background: color-mix(in srgb, #06b6d4 12%, transparent); }
+
+.model-dropdown-empty {
+  padding: 20px 10px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.model-dropdown-footer {
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.model-dropdown-footer:empty {
+  display: none;
+}
+
+.model-custom-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--accent);
+  transition: background var(--transition);
+}
+
+.model-custom-option:hover {
+  background: var(--bg-hover);
+}
+
+.model-custom-option svg {
+  flex-shrink: 0;
+}
+
+.model-custom-id {
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+
+/* ─── Endpoint Configuration ────────────────────────────────────────────── */
+
+.endpoint-default {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  padding: 4px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mono-input {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* ─── Custom Provider Dialog ────────────────────────────────────────────── */
+
+.custom-provider-dialog {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  max-width: 420px;
+  width: 90%;
+  box-shadow: var(--shadow-lg);
+  animation: slideUp 150ms ease;
+}
+
+.custom-provider-dialog h3 {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 14px;
+}
+
+.custom-provider-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.custom-provider-form .form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.custom-provider-form label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.custom-provider-form .form-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+.custom-provider-form .btn-danger {
+  background: var(--danger);
+  color: #fff;
+  border-color: var(--danger);
+  margin-right: auto;
+}
+
+.custom-provider-form .btn-danger:hover {
+  opacity: 0.9;
+}
+
 /* ─── Chat History Section ───────────────────────────────────────────────── */
 
 .chat-history-section {

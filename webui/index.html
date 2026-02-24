@@ -38,27 +38,49 @@
           <!-- Provider Selection -->
           <div class="setting-group">
             <label for="provider-select">Provider</label>
-            <select id="provider-select">
-              <option value="openai">OpenAI</option>
-              <option value="anthropic">Anthropic</option>
-              <option value="google">Google Gemini</option>
-              <option value="groq">Groq</option>
-              <option value="together">Together AI</option>
-              <option value="mistral">Mistral</option>
-              <option value="deepseek">DeepSeek</option>
-              <option value="fireworks">Fireworks</option>
-              <option value="perplexity">Perplexity</option>
-              <option value="cohere">Cohere</option>
-              <option value="ollama">Ollama</option>
-            </select>
+            <div class="provider-select-row">
+              <select id="provider-select">
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="google">Google Gemini</option>
+                <option value="groq">Groq</option>
+                <option value="together">Together AI</option>
+                <option value="mistral">Mistral</option>
+                <option value="deepseek">DeepSeek</option>
+                <option value="fireworks">Fireworks</option>
+                <option value="perplexity">Perplexity</option>
+                <option value="cohere">Cohere</option>
+                <option value="xai">xAI</option>
+                <option value="ollama">Ollama</option>
+              </select>
+              <button id="add-provider-btn" class="icon-btn" title="Add custom provider">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+              </button>
+            </div>
           </div>
 
-          <!-- Model -->
+          <!-- Model Selector -->
           <div class="setting-group">
-            <label for="model-input">Model</label>
-            <input type="text" id="model-input" list="model-suggestions" placeholder="e.g. gpt-4o" autocomplete="off">
-            <datalist id="model-suggestions"></datalist>
-            <div class="hint" id="model-hint"></div>
+            <label>Model</label>
+            <div class="model-selector" id="model-selector">
+              <button class="model-selector-trigger" id="model-trigger" type="button">
+                <span class="model-trigger-name" id="model-trigger-name">Select a model</span>
+                <span class="model-trigger-meta" id="model-trigger-meta"></span>
+                <svg class="model-trigger-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+              <div class="model-dropdown" id="model-dropdown">
+                <div class="model-dropdown-search">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                  <input type="text" id="model-search" placeholder="Search models or type custom ID..." autocomplete="off">
+                </div>
+                <div class="model-dropdown-list" id="model-list">
+                  <!-- Populated dynamically -->
+                </div>
+                <div class="model-dropdown-footer" id="model-dropdown-footer">
+                  <!-- Custom model option appears here -->
+                </div>
+              </div>
+            </div>
           </div>
 
           <!-- API Key -->
@@ -106,17 +128,24 @@
             </div>
           </details>
 
-          <!-- Advanced -->
-          <details class="setting-group">
-            <summary>Advanced</summary>
+          <!-- Endpoint Configuration -->
+          <details class="setting-group" id="endpoint-config">
+            <summary>Endpoint</summary>
             <div class="param-grid">
-              <label for="cors-proxy">CORS Proxy URL</label>
+              <label>Default URL</label>
+              <div class="endpoint-default" id="endpoint-default">https://api.openai.com/v1</div>
+
+              <label for="custom-endpoint">Custom URL</label>
+              <input type="text" id="custom-endpoint" placeholder="Override base URL">
+              <div class="hint full-span">Override the provider's default API endpoint. Useful for proxies, Ollama, vLLM, LM Studio, etc.</div>
+
+              <label for="custom-headers">Headers</label>
+              <textarea id="custom-headers" rows="2" class="mono-input" placeholder='{"X-Custom": "value"}'></textarea>
+              <div class="hint full-span">Additional HTTP headers as JSON. Merged with provider defaults.</div>
+
+              <label for="cors-proxy">CORS Proxy</label>
               <input type="text" id="cors-proxy" placeholder="https://corsproxy.io/?">
               <div class="hint full-span">Required for some providers in browser. Leave empty to call APIs directly.</div>
-
-              <label for="custom-endpoint">Custom Endpoint</label>
-              <input type="text" id="custom-endpoint" placeholder="Override base URL">
-              <div class="hint full-span">Override the provider's default API endpoint.</div>
             </div>
           </details>
         </div>
@@ -197,7 +226,7 @@
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
         </div>
         <h2>AgentLoop Chat</h2>
-        <p>Bring Your Own Key — chat with 11 LLM providers from one interface.</p>
+        <p>Bring Your Own Key — chat with 12 LLM providers from one interface.</p>
         <p class="muted">Select a provider, enter your API key, and start chatting.</p>
       </div>
     </div>
