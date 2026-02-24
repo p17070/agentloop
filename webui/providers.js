@@ -256,24 +256,102 @@ const MODEL_CATALOG = [
   { id: "codellama", name: "Code Llama", provider: "ollama", categories: ["code"], ctx: 16000 },
   { id: "gemma3", name: "Gemma 3", provider: "ollama", categories: ["fast"], ctx: 128000 },
   { id: "phi4", name: "Phi-4", provider: "ollama", categories: ["fast", "reasoning"], ctx: 16000 },
-];
 
-// Category display config
-const CATEGORY_META = {
-  flagship: { label: "Flagship", icon: "star" },
-  fast: { label: "Fast", icon: "zap" },
-  reasoning: { label: "Reasoning", icon: "brain" },
-  code: { label: "Code", icon: "code" },
-  vision: { label: "Vision", icon: "eye" },
-  search: { label: "Search", icon: "search" },
-  embedding: { label: "Embedding", icon: "grid" },
-};
+  // ═══════════════════════════════════════════════════════════════════════════
+  // IMAGE GENERATION MODELS
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // ── OpenAI — Image ────────────────────────────────────────────────────────
+  { id: "gpt-image-1", name: "GPT Image 1", provider: "openai", modality: "image", categories: ["image"], isDefault: true },
+  { id: "dall-e-3", name: "DALL-E 3", provider: "openai", modality: "image", categories: ["image"] },
+  { id: "dall-e-2", name: "DALL-E 2", provider: "openai", modality: "image", categories: ["image"] },
+
+  // ── Google — Image ────────────────────────────────────────────────────────
+  { id: "imagen-4.0-generate-preview-05-20", name: "Imagen 4", provider: "google", modality: "image", categories: ["image"], isDefault: true },
+  { id: "imagen-3.0-generate-002", name: "Imagen 3", provider: "google", modality: "image", categories: ["image"] },
+  { id: "gemini-2.0-flash-preview-image-generation", name: "Gemini Flash (image gen)", provider: "google", modality: "image", categories: ["image"] },
+
+  // ── xAI — Image ───────────────────────────────────────────────────────────
+  { id: "grok-2-image", name: "Grok 2 Image", provider: "xai", modality: "image", categories: ["image"] },
+
+  // ── Together — Image ──────────────────────────────────────────────────────
+  { id: "black-forest-labs/FLUX.1.1-pro", name: "FLUX 1.1 Pro", provider: "together", modality: "image", categories: ["image"], isDefault: true },
+  { id: "black-forest-labs/FLUX.1-schnell", name: "FLUX Schnell", provider: "together", modality: "image", categories: ["image"] },
+  { id: "stabilityai/stable-diffusion-xl-base-1.0", name: "SDXL 1.0", provider: "together", modality: "image", categories: ["image"] },
+
+  // ── Fireworks — Image ─────────────────────────────────────────────────────
+  { id: "accounts/fireworks/models/flux-1-1-pro", name: "FLUX 1.1 Pro", provider: "fireworks", modality: "image", categories: ["image"] },
+  { id: "accounts/fireworks/models/flux-1-schnell", name: "FLUX Schnell", provider: "fireworks", modality: "image", categories: ["image"] },
+  { id: "accounts/fireworks/models/playground-v2-5-1024px-aesthetic", name: "Playground v2.5", provider: "fireworks", modality: "image", categories: ["image"] },
+
+  // ── Ollama — Image ────────────────────────────────────────────────────────
+  { id: "stable-diffusion", name: "Stable Diffusion", provider: "ollama", modality: "image", categories: ["image"] },
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // AUDIO MODELS (Speech-to-Text + Text-to-Speech)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // ── OpenAI — Audio ────────────────────────────────────────────────────────
+  { id: "whisper-1", name: "Whisper v3", provider: "openai", modality: "audio", categories: ["audio"], isDefault: true },
+  { id: "tts-1", name: "TTS-1", provider: "openai", modality: "audio", categories: ["tts"] },
+  { id: "tts-1-hd", name: "TTS-1 HD", provider: "openai", modality: "audio", categories: ["tts"] },
+  { id: "gpt-4o-audio-preview", name: "GPT-4o Audio", provider: "openai", modality: "audio", categories: ["audio"] },
+  { id: "gpt-4o-mini-audio-preview", name: "GPT-4o Mini Audio", provider: "openai", modality: "audio", categories: ["audio"] },
+
+  // ── Google — Audio ────────────────────────────────────────────────────────
+  { id: "gemini-2.5-flash-preview-tts", name: "Gemini 2.5 Flash TTS", provider: "google", modality: "audio", categories: ["tts"] },
+
+  // ── Groq — Audio ──────────────────────────────────────────────────────────
+  { id: "whisper-large-v3-turbo", name: "Whisper Large v3 Turbo", provider: "groq", modality: "audio", categories: ["audio"], isDefault: true },
+  { id: "whisper-large-v3", name: "Whisper Large v3", provider: "groq", modality: "audio", categories: ["audio"] },
+
+  // ── Ollama — Audio ────────────────────────────────────────────────────────
+  { id: "whisper", name: "Whisper", provider: "ollama", modality: "audio", categories: ["audio"] },
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // EMBEDDING MODELS
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // ── OpenAI — Embedding ────────────────────────────────────────────────────
+  { id: "text-embedding-3-large", name: "Embedding 3 Large", provider: "openai", modality: "embedding", categories: ["embedding"], isDefault: true },
+  { id: "text-embedding-3-small", name: "Embedding 3 Small", provider: "openai", modality: "embedding", categories: ["embedding"] },
+  { id: "text-embedding-ada-002", name: "Embedding Ada 002", provider: "openai", modality: "embedding", categories: ["embedding"] },
+
+  // ── Google — Embedding ────────────────────────────────────────────────────
+  { id: "text-embedding-005", name: "Text Embedding 005", provider: "google", modality: "embedding", categories: ["embedding"], isDefault: true },
+
+  // ── Cohere — Embedding ────────────────────────────────────────────────────
+  { id: "embed-v4.0", name: "Embed v4", provider: "cohere", modality: "embedding", categories: ["embedding"], isDefault: true },
+  { id: "embed-english-v3.0", name: "Embed English v3", provider: "cohere", modality: "embedding", categories: ["embedding"] },
+  { id: "embed-multilingual-v3.0", name: "Embed Multilingual v3", provider: "cohere", modality: "embedding", categories: ["embedding"] },
+
+  // ── Together — Embedding ──────────────────────────────────────────────────
+  { id: "togethercomputer/m2-bert-80M-8k-retrieval", name: "M2 BERT 80M", provider: "together", modality: "embedding", categories: ["embedding"] },
+
+  // ── Mistral — Embedding ───────────────────────────────────────────────────
+  { id: "mistral-embed", name: "Mistral Embed", provider: "mistral", modality: "embedding", categories: ["embedding"] },
+
+  // ── Fireworks — Embedding ─────────────────────────────────────────────────
+  { id: "nomic-ai/nomic-embed-text-v1.5", name: "Nomic Embed v1.5", provider: "fireworks", modality: "embedding", categories: ["embedding"] },
+
+  // ── Ollama — Embedding ────────────────────────────────────────────────────
+  { id: "nomic-embed-text", name: "Nomic Embed Text", provider: "ollama", modality: "embedding", categories: ["embedding"] },
+  { id: "mxbai-embed-large", name: "mxbai Embed Large", provider: "ollama", modality: "embedding", categories: ["embedding"] },
+];
 
 // ─── Model Helpers ──────────────────────────────────────────────────────────
 
-/** Get models for a specific provider, optionally filtered by search query */
-function getModelsForProvider(provider, query) {
-  let models = MODEL_CATALOG.filter(m => m.provider === provider);
+/**
+ * Get models for a provider, filtered by modality and optional search query.
+ * modality: "chat" | "image" | "audio" | "embedding"
+ * "chat" returns models without an explicit modality field (the default).
+ */
+function getModelsForProvider(provider, modality, query) {
+  let models = MODEL_CATALOG.filter(m => {
+    if (m.provider !== provider) return false;
+    if (modality === "chat") return !m.modality; // chat = no explicit modality
+    return m.modality === modality;
+  });
   if (query) {
     const q = query.toLowerCase();
     models = models.filter(m =>
@@ -281,12 +359,32 @@ function getModelsForProvider(provider, query) {
       m.categories.some(c => c.toLowerCase().includes(q))
     );
   }
+  // Sort: default model first, then alphabetically by name
+  models.sort((a, b) => {
+    if (a.isDefault && !b.isDefault) return -1;
+    if (b.isDefault && !a.isDefault) return 1;
+    return a.name.localeCompare(b.name);
+  });
   return models;
 }
 
-/** Get the default model from the catalog for a provider */
-function getCatalogDefault(provider) {
-  return MODEL_CATALOG.find(m => m.provider === provider && m.isDefault);
+/** Check if a provider has any models for a given modality */
+function providerHasModality(provider, modality) {
+  return MODEL_CATALOG.some(m => {
+    if (m.provider !== provider) return false;
+    if (modality === "chat") return !m.modality;
+    return m.modality === modality;
+  });
+}
+
+/** Get the default model from the catalog for a provider and modality */
+function getCatalogDefault(provider, modality) {
+  const mod = modality || "chat";
+  return MODEL_CATALOG.find(m => {
+    if (m.provider !== provider || !m.isDefault) return false;
+    if (mod === "chat") return !m.modality;
+    return m.modality === mod;
+  });
 }
 
 /** Format context window size: 128000 → "128k", 1000000 → "1M" */
@@ -295,29 +393,6 @@ function fmtCtx(n) {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1) + "M";
   if (n >= 1_000) return (n / 1_000).toFixed(0) + "k";
   return n.toString();
-}
-
-/** Group models by their primary category, preserving order */
-function groupByCategory(models) {
-  const order = ["flagship", "fast", "reasoning", "code", "vision", "search", "embedding"];
-  const groups = new Map();
-  const assigned = new Set();
-
-  for (const cat of order) {
-    const inCat = models.filter(m => m.categories.includes(cat) && !assigned.has(m.id));
-    if (inCat.length > 0) {
-      groups.set(cat, inCat);
-      inCat.forEach(m => assigned.add(m.id));
-    }
-  }
-
-  // Any remaining unassigned models
-  const remaining = models.filter(m => !assigned.has(m.id));
-  if (remaining.length > 0) {
-    groups.set("other", remaining);
-  }
-
-  return groups;
 }
 
 // ─── Custom Provider Management ─────────────────────────────────────────────
