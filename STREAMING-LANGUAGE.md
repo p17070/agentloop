@@ -1,468 +1,498 @@
-# What Would a Streaming Programming Language Look Like?
+# Streaming as a Programming Paradigm
 
-A design exploration prompted by the observation that LLM outputs are inherently streaming — tokens arrive one at a time over seconds — yet mainstream programming languages treat values as complete and instantaneous. The mismatch creates boilerplate: event handlers, state machines for parsing partial JSON, manual buffering. What if streaming were the foundation, not an afterthought?
-
----
-
-## The Core Insight
-
-Every programming language has a notion of a **value** — a thing that *is*. A string is `"hello"`. A number is `42`. You call a function, it returns a value, done.
-
-But an LLM output is not a value. It is a **becoming**. It starts as nothing, accumulates tokens, and eventually converges into a final string. Between start and convergence, it is *partially something* — usable, interpretable, even actionable, but not yet complete.
-
-Current languages force a choice:
-- **Block until done** — `await llm("...")` — simple, but throws away latency and composability.
-- **Callback soup** — `llm("...", { onToken: (t) => ... })` — powerful, but obscures control flow.
-- **Async iterators** — `for await (const chunk of llm("..."))` — better, but still second-class. You can't pass a "partially completed string" to another function and have it do something useful.
-
-A streaming-first language would make **partially completed values** a first-class concept in the type system, the syntax, and the runtime.
+Not "a language that handles streams." A language whose paradigm IS streaming — where the fundamental computational act is token emission, the way functional programming's fundamental act is expression evaluation and procedural programming's is statement execution.
 
 ---
 
-## The `~` Type Modifier
+## The Paradigm Table
 
-The central language construct: any type `T` has a streaming variant `T~` (pronounced "T stream" or "T flowing"). A `string~` is a string that is still being written. A `{name: string, age: int}~` is a record whose fields are still being populated.
+Every programming paradigm is defined by what computation *is* in that world:
 
-```
-let story~ = llm("Tell me a story")    // story~ is string~
-print(story~)                           // prints tokens as they arrive
-```
+| | Procedural | Functional | Logic | **Streaming** |
+|---|---|---|---|---|
+| **Primitive** | Statement | Expression | Relation | **Emission** |
+| **Composition** | Sequencing (`;`) | Application (`f(x)`) | Unification | **Conditioning** |
+| **State** | Mutable variables | Immutable bindings | Substitution set | **Context (all prior emissions)** |
+| **Abstraction** | Procedure | Function | Rule | **Pattern** |
+| **Types** | Data descriptions | Type algebra | Terms | **Grammars** |
+| **Execution** | Run statements | Reduce expressions | Search proof tree | **Generate tokens** |
+| **Non-determinism** | Exception | Avoided | Fundamental | **Fundamental** |
+| **Result** | Side effects + return value | A value | A proof | **The emission itself** |
 
-The `~` is not syntactic sugar for `AsyncIterator<T>` or `Observable<T>`. It represents a **monotonically accumulating value** — one that only grows, never shrinks, and eventually converges to a final `T`.
-
-### Subtyping
-
-```
-T <: T~       // any complete value is a trivially-converged stream
-              // so you can pass a string where string~ is expected
-```
-
-This means every function that accepts `string~` also accepts `string`. Streaming is the general case; completed values are the special case.
-
-### Convergence
-
-```
-let final: string = await story~        // block until stream ends
-let partial: string = snapshot(story~)  // grab current state without blocking
-let timed: string = await story~ | timeout(5s)  // take whatever's there after 5s
-```
+Streaming isn't a feature bolted onto another paradigm. It's a paradigm where **the program IS the output being generated**. Execution doesn't produce a result — execution IS the progressive emission of the result, token by token.
 
 ---
 
-## Reactive Dataflow
+## The Core Idea: Programs Are Output
 
-Operations on streaming values produce streaming results. The runtime propagates tokens downstream automatically.
-
-```
-let response~ = llm("Tell me about Paris")
-let upper~ = response~.toUpperCase()         // also string~ — transforms tokens as they arrive
-let words~ = response~ |> split(" ")         // string[]~ — array that grows as words complete
-let count~ = words~ |> length                // int~ — updates in real-time: 1, 2, 3, ...
-
-print(count~)  // prints: 1 2 3 4 5 ... 247
-```
-
-This is like a spreadsheet where downstream cells update as upstream cells change — but streams are monotonic, so it's incremental computation, not arbitrary reactivity. No cycles, no glitches, no diamond problems.
-
----
-
-## Incremental Structured Data
-
-This is where it gets interesting. When an LLM generates JSON like `{"name": "Alice", "age": 30}`, at various points in time the raw text is:
+In HTML, the document IS the program. In a streaming language, the same is true, except the document is being written autoregressively — with the programmer specifying structure and constraints, and a generative process filling in the rest.
 
 ```
-t=0   {
-t=1   {"name":
-t=2   {"name": "Al
-t=3   {"name": "Alice",
-t=4   {"name": "Alice", "age": 30}
+Dear {gen name /[A-Z][a-z]+/},
+
+Your application for {gen role enum("Engineer", "Designer", "PM")}
+has been {gen decision enum("accepted", "rejected")}.
+
+{match decision
+  "accepted" =>
+    We were impressed by your {gen quality ~15 tokens}.
+    Your start date is {gen date /\d{4}-\d{2}-\d{2}/}.
+
+  "rejected" =>
+    Unfortunately, {gen reason ~30 tokens}.
+    We encourage you to {gen encouragement ~20 tokens}.
+}
+
+Best regards,
+{gen sender /[A-Z][a-z]+ [A-Z][a-z]+/}
 ```
 
-An incremental JSON parser can emit partial structure. The language represents this as a record where individual fields are themselves streams:
+This is a complete program. Running it produces a letter. The literal text emits directly. Each `gen` block is filled by the LLM, constrained by its annotation. The `match` branches based on a previously *generated* value. Everything generated so far is the context for everything that follows.
+
+There is no data source. There are no variables being looked up. The "data" is generated, and it conditions everything downstream. The program specifies the **structure** of generation, not the **content**.
+
+This is not a template engine. A template has a fixed structure with holes for data. Here, **the structure itself can be generated**:
 
 ```
-let data~ = response~ |> json<{name: string, age: int}>
+{gen title ~10 tokens}
 
-// data~.name is string~ — starts emitting at t=2, converges at t=3
-// data~.age is int~     — pending until t=4, then converges instantly
-
-// You can use data~.name before data~.age even begins
-greet(data~.name)  // "Hi Al..." → "Hi Ali..." → "Hi Alice"
-```
-
-The type of `data~` is not just `{name: string, age: int}~`. It is `{name: string~, age: int~}` — the streaming distributes over the record fields. Each field has its own timeline.
-
-For arrays, streaming distributes over elements:
-
-```
-let items~ = response~ |> json<string[]>
-// items~ emits elements one at a time as they're parsed
-// items~[0] is available before items~[1] exists
-for item~ in items~ {
-    print(await item~)  // prints each item as it completes
+{for i in 1..{gen n int(3..8)}
+  Section {i}: {gen heading ~5 tokens}
+  {gen body ~100 tokens}
 }
 ```
 
-This isn't limited to JSON. Any format with an incremental parser — XML, CSV, line-delimited text, YAML — gets the same treatment:
-
-```
-let rows~ = response~ |> csv<{x: float, y: float}>
-let plot~ = rows~ |> scatter_plot    // plot updates as rows arrive
-render(plot~)
-```
+The loop bound `n` is generated. The number of sections is decided by the LLM, not the programmer. The program's control flow depends on generated values — the skeleton is fluid, not fixed.
 
 ---
 
-## Cancellation as First-Class Control Flow
+## The Six Primitives
 
-If you can act on partial data, you should be able to *stop generating* when you have enough. Cancellation propagates upstream automatically.
+### 1. Literal Emission
 
-```
-let response~ = llm("List 100 interesting facts")
-let first_five~ = response~ |> lines |> take(5)
-// After 5 lines are captured, `take` signals completion.
-// This propagates upstream: the LLM generation is cancelled.
-// You save tokens, money, and latency.
-print(await first_five~)
-```
-
-Cancellation works through arbitrary pipelines:
+Text outside any block is emitted directly into the stream. It's simultaneously output AND context for all subsequent generation.
 
 ```
-let response~ = llm("Generate a report")
-let parsed~ = json(response~)
-let validated~ = validate(parsed~, schema)
+The sky is blue.
+```
 
-match validated~ {
-    Error(e) => {
-        // Validation failed on partial data — abort everything
-        cancel(response~)       // stops generation
-        handle(e)
-    }
-    Ok(data~) => process(data~)
+This isn't a string literal assigned to a variable. It's an emission — these tokens flow into the output stream and become part of the context window.
+
+### 2. Generation (`gen`)
+
+The fundamental operation. A hole in the stream, filled by the LLM, constrained by a grammar.
+
+```
+{gen weather enum("sunny", "rainy", "cloudy")}
+{gen temperature int(0..50)}
+{gen description ~20 tokens}
+{gen poem /[a-z ]+\n[a-z ]+\n[a-z ]+/}
+```
+
+`gen` doesn't return a value. It emits tokens into the stream. The emitted tokens become context for all subsequent generation. The constraint (enum, int range, token count, regex) restricts the LLM's vocabulary at each position — this is constrained decoding, but elevated to a language primitive.
+
+A bare `gen` with no constraint is unconstrained generation — the LLM emits freely until the next literal or structural boundary:
+
+```
+Once upon a time, {gen}
+The end.
+```
+
+Everything between "time, " and "\nThe end." is generated freely.
+
+### 3. Naming (`as`)
+
+You can name a generation to reference it later — not as a variable holding a value, but as a region of the context that can be pointed to.
+
+```
+{gen protagonist /[A-Z][a-z]+/ as hero}
+walked into the {gen setting ~5 tokens as place}.
+
+Later, {hero} returned to {place} and found it changed.
+```
+
+`hero` and `place` aren't variables. They're **back-references** into the emission stream. When you write `{hero}`, it doesn't re-emit — it makes the reference salient in the context window, telling the LLM "I'm talking about that thing from earlier." The runtime can implement this as literal re-emission, or as a pointer within the context, depending on the underlying model.
+
+### 4. Branching (`match`)
+
+Control flow based on generated values. The branch condition is itself generated.
+
+```
+You enter the cave. It is {gen mood enum("dark", "bright", "eerie") as mood}.
+
+{match mood
+  "dark"   => You can barely see. {gen dark_scene ~30 tokens}
+  "bright" => Crystals illuminate everything. {gen bright_scene ~30 tokens}
+  "eerie"  => Something feels wrong. {gen eerie_scene ~30 tokens}
 }
 ```
 
-Resource cleanup follows cancellation:
+The programmer doesn't decide which branch. The LLM generates the branch condition, and then subsequent generation is conditioned on being inside that branch. The programmer provides the *structure of possibilities*, not the choice.
+
+This is fundamentally different from procedural `if/else`, where the programmer (or deterministic computation) decides the branch. Here, branching is **generative** — the decision emerges from the model.
+
+### 5. Repetition (`for`, `repeat`)
+
+Loops whose bounds can be generated.
 
 ```
-let response~ = llm("Write a long essay")
-defer { log("Generation complete or cancelled, tokens used: {response~.usage}") }
+{gen n int(3..6) as count} reasons to learn Rust:
 
-// If we cancel response~, the defer block still runs.
-// HTTP connections are closed, token counts are finalized.
-```
-
----
-
-## Streaming Functions
-
-Functions can be declared `stream` to indicate they produce output incrementally:
-
-```
-stream fn translate(input~: string~, lang: string) -> string~ {
-    // Process input sentence by sentence
-    for sentence~ in input~ |> split_by(".") {
-        let s = await sentence~                     // wait for complete sentence
-        yield llm("Translate to {lang}: {s}")~      // stream the translation out
-    }
-}
-
-// Usage: streaming in, streaming out
-let english~ = llm("Tell me about Paris")
-let french~ = translate(english~, "fr")
-print(french~)    // prints French translation incrementally
-```
-
-The function type system captures this:
-
-```
-(T~) -> U~      // streaming transformer — streaming in, streaming out
-(T~) -> U       // streaming reducer — streaming in, converged out
-(T)  -> U~      // generator — value in, streaming out
-(T)  -> U       // pure function — value in, value out
-```
-
-All four are useful. A streaming-first language makes the first three as natural as the fourth.
-
----
-
-## Partial Pattern Matching
-
-Pattern matching can operate on incomplete data. The runtime re-evaluates matches as more data arrives:
-
-```
-let response~ = llm("Analyze this data")
-
-match response~ {
-    // Fires as soon as "ERROR" appears anywhere in the stream
-    /ERROR: (.*)/ as err~ => {
-        cancel(response~)
-        alert(err~)
-    }
-    // Fires when the stream converges and no ERROR was found
-    converged(text) => {
-        process(text)
-    }
+{for i in 1..count
+  {i}. {gen reason ~15 tokens}
 }
 ```
 
-For structured streaming data:
+The number of iterations is decided by the LLM. Each iteration's generation is conditioned on all previous iterations — so reason 3 knows about reasons 1 and 2 and won't repeat them (because they're in the context).
+
+More radical — looping until a generated condition:
 
 ```
-let action~ = llm("What should I do?", tools: [search, calculate])~ |> parse_tool_call
+{repeat
+  {gen paragraph ~50 tokens}
 
-match action~ {
-    // As soon as we know it's a tool call, start preparing
-    ToolCall { name: "search", args~ } => {
-        // args~ still streaming, but we can start warming up the search engine
-        prepare_search()
-        let result = search(await args~)
-        respond_with(result)
-    }
-    ToolCall { name: "calculate", args~ } => {
-        calculate(await args~)
-    }
-    Text(t~) => print(t~)
+  {gen more enum("continue", "stop") as signal}
+  until signal == "stop"
 }
 ```
 
-The key idea: you can match on the *shape* of data before all the *content* is available. You know it's a `ToolCall` with name `"search"` before the arguments finish generating.
+The LLM decides when to stop. The program provides the structure (paragraphs followed by a continue/stop decision), but the termination condition is emergent.
+
+### 6. Patterns (Abstraction)
+
+Reusable generation structures. Not functions — they don't take input and return output. They're **templates that emit** when instantiated.
+
+```
+pattern dialogue(a, b)
+  {a}: {gen ~30 tokens conditioned_on(a)}
+  {b}: {gen ~30 tokens conditioned_on(b)}
+
+pattern debate(topic, rounds)
+  # Debate: {topic}
+
+  {for round in 1..rounds
+    ## Round {round}
+    {dialogue("Pro", "Con")}
+  }
+
+  ## Verdict
+  {gen ~50 tokens}
+```
+
+Instantiation:
+
+```
+{debate("Is AI dangerous?", 3)}
+```
+
+Patterns aren't called — they're **expanded** into the emission stream, like macros, but with generation filling the holes. Each expansion creates a unique generation trajectory because the LLM produces different tokens each time.
 
 ---
 
-## Multi-Agent Composition
+## Context IS State
 
-Chaining LLM calls where one's output feeds another's input is a natural streaming pattern:
+There are no variables. There is no heap. There is no mutable state.
 
-```
-// Pipeline: generate → critique → revise
-let draft~ = llm("Write an essay about climate change")
-let critique~ = llm("Critique this essay:\n{await draft~}")
-let final~ = llm("Revise based on feedback:\nEssay: {await draft~}\nCritique: {await critique~}")
-print(final~)
-```
+There is only **context**: the sequence of all tokens emitted so far. This is the state of the program. It grows monotonically. It is never modified. And it is the basis for all future generation.
 
-With today's LLM APIs, you must `await` before sending to the next model (APIs don't accept incremental prompts). But the language can express the *intent* for streaming composition, and the runtime handles the buffering:
+This maps directly to how transformers work: the KV cache IS the state. Every generated token is conditioned on all previous tokens. The "state" is just the history.
+
+In procedural programming, you say "set x = 5" and later "read x" — the state is a mapping of names to values. In streaming programming, you emit "the temperature is 72 degrees" and later that emission is in the context — the LLM "knows" the temperature without any variable lookup.
 
 ```
-// The `|>~` operator: streaming pipe with buffering
-// Sends accumulated tokens to the next LLM as context,
-// re-invoking if the upstream hasn't converged yet.
-let result~ = llm("Generate data")
-          |>~ llm("Clean this: {_}")
-          |>~ llm("Format this: {_}")
+The protagonist's name is {gen name /[A-Z][a-z]+/}.
+
+// 200 tokens later...
+
+// The LLM will use the right name here because it's in context.
+// No variable needed. The emission IS the state.
+{gen ~50 tokens}
 ```
 
-More realistically, parallel multi-agent patterns:
+Names (`as`) exist as a convenience for human readability and for explicit back-referencing. But the LLM doesn't need them — it has the context.
+
+---
+
+## Types Are Grammars
+
+In procedural/functional languages, types describe the shape of data sitting in memory: `int`, `string`, `{name: string, age: int}`.
+
+In a streaming language, types describe the shape of **valid emissions**. They're constraints on what the LLM can generate at this position. They are literally grammars:
 
 ```
-// Race: first model to produce a valid answer wins
-let answer~ = race(
-    llm("Solve: ...", model: "claude-4"),
-    llm("Solve: ...", model: "gpt-5"),
-) |> first(valid)
-// Loser is cancelled automatically
+int(1..100)             // a number between 1 and 100
+enum("yes", "no")       // exactly one of these strings
+/[A-Z][a-z]+ \d{4}/    // regex pattern
+json({                   // valid JSON matching this schema
+  name: string,
+  age: int(0..150),
+  hobbies: [string; 1..5]
+})
+~50 tokens              // length constraint (soft)
+unconstrained           // anything goes
+```
 
-// Fan-out/fan-in: multiple perspectives, merged
-let perspectives~[] = parallel(
-    llm("Analyze from economic perspective: ..."),
-    llm("Analyze from social perspective: ..."),
-    llm("Analyze from technical perspective: ..."),
-)
-let synthesis~ = llm("Synthesize these analyses:\n{await all(perspectives~)}")
+These aren't types of values. They're grammars for generation. `int(1..100)` doesn't describe a variable — it tells the constrained decoder to only allow token sequences that form an integer between 1 and 100.
+
+This means **type checking IS grammar checking**. A well-typed streaming program is one where all `gen` blocks have satisfiable grammars, and all `match` branches cover the possible emissions of their condition.
+
+Grammars compose:
+
+```
+// A grammar for a mailing address
+grammar address
+  {/\d+/} {/[A-Za-z ]+/} Street
+  {/[A-Za-z]+/}, {enum("CA","NY","TX",...)} {/\d{5}/}
+
+// Use it
+Ship to: {gen address}
 ```
 
 ---
 
-## Stream Combinators
+## Composition Is Conditioning
 
-The standard library provides composable stream operations:
+In functional programming, you compose by passing the output of one function as the input of another: `g(f(x))`.
 
-```
-// Merging
-merge(a~, b~) -> (A | B)~          // interleave as tokens arrive
-concat(a~, b~) -> A~               // a~ first, then b~ (sequential)
-
-// Filtering and slicing
-take(s~, n) -> T~                   // first n elements, cancel rest
-skip(s~, n) -> T~                   // drop first n elements
-filter(s~, pred) -> T~              // only matching elements
-take_until(s~, pred) -> T~          // take until predicate fires
-
-// Accumulation
-scan(s~, init, f) -> U~            // running fold (like reduce but streams intermediate results)
-buffer(s~, n) -> T[]~              // collect into chunks of n
-window(s~, n) -> T[]~              // sliding window of size n
-
-// Duplication and sharing
-tee(s~) -> (T~, T~)                // duplicate a stream (streams are affine by default)
-broadcast(s~, n) -> T~[]           // duplicate to n consumers
-cache(s~) -> T~                    // memoize — multiple consumers see same data
-
-// Timing
-throttle(s~, rate) -> T~           // limit emission rate
-debounce(s~, delay) -> T~          // wait for pause in emission
-timeout(s~, duration) -> T~        // error if no emission within duration
-
-// Combination
-zip(a~, b~) -> (A, B)~            // pair up (waits for both)
-race(a~, b~) -> (A | B)~          // first to emit wins
-```
-
----
-
-## Error Handling
-
-Streams can fail mid-way. The language makes partial results accessible even after failure:
+In streaming programming, you compose by **putting one generation in the context of another**. Output of the first becomes the conditioning for the second.
 
 ```
-try {
-    let data~ = llm("Generate report") |> json<Report>
-    process(data~)
-} catch StreamError { partial, error } {
-    // `partial` is whatever was successfully received before failure
-    // Maybe the JSON was 80% complete — that's still useful
-    log("Partial result: {partial}")
-    log("Error: {error}")
+// Sequential conditioning: each generation sees everything before it
+{gen premise ~20 tokens}
+Therefore, {gen conclusion ~20 tokens}
+However, {gen counterpoint ~20 tokens}
+```
 
-    // Retry with context
-    let retry~ = llm("Continue this partial JSON:\n{partial}")~
-    process(retry~)
+This is the simplest composition. Each generation is conditioned on all prior emissions, including previous generations. The `conclusion` is influenced by the `premise`. The `counterpoint` is influenced by both.
+
+Explicit conditioning with `given`:
+
+```
+// A generation explicitly conditioned on specific context
+{given "You are a harsh literary critic."
+  {gen review ~100 tokens}
 }
 ```
 
-Or with pattern matching:
+The `given` block adds to the context without emitting to the output stream. It's like a system prompt — it influences generation but doesn't appear in the output. (Whether the runtime implements this as a system message, a prefix, or a soft prompt is an implementation detail.)
+
+Pattern composition:
 
 ```
-let result~ = llm("...")~ |> json<Data> |> catch {
-    Timeout(partial) => default_with(partial)
-    ParseError(raw~, pos) => llm("Fix this JSON:\n{raw~}")~ |> json<Data>
-    RateLimit(retry_after) => { sleep(retry_after); retry() }
-}
+pattern summarize(source)
+  {given source}
+  Summary: {gen ~50 tokens}
+
+pattern critique(source)
+  {given source}
+  Critique: {gen ~50 tokens}
+
+// Compose: critique of a summary
+{critique(summarize("...long text..."))}
 ```
+
+`summarize` emits a summary. That entire emission becomes the argument to `critique`, which conditions on it. Composition is contextual nesting.
 
 ---
 
-## Resource Management and Budgets
+## Concurrency: Multiple Emission Streams
 
-Streams hold resources — HTTP connections, memory buffers, API quotas. The language tracks these:
+The interesting case: multiple generation processes running simultaneously, each conditioned on the others.
 
 ```
-// Token budgets
-budget(max_tokens: 1000) {
-    let a~ = llm("First task")       // uses ~200 tokens
-    let b~ = llm("Second task")      // uses ~300 tokens
-    let c~ = llm("Third task")       // uses ~400 tokens
-    let d~ = llm("Fourth task")      // would exceed budget — runtime pauses/errors
-}
+// Two agents, interleaved, each seeing the full conversation
+agent alice {given "You are a patient teacher."}
+agent bob {given "You are a confused student."}
 
-// Cost tracking (streaming cost is known as tokens arrive)
-let response~ = llm("...")
-print(response~.cost~)   // cost~ updates in real-time: $0.001, $0.002, ...
-
-// Conditional cancellation based on cost
-when response~.cost~ > $0.05 {
-    cancel(response~)
-    warn("Generation cancelled: cost exceeded $0.05")
+{interleave alice, bob rounds=4
+  {alice}: {gen ~30 tokens as alice}
+  {bob}: {gen ~30 tokens as bob}
 }
 ```
 
-Streams are **affine by default** — consumed once, like Rust iterators. This prevents accidental double-consumption and makes resource cleanup predictable:
+Each round, `alice` generates conditioned on the full conversation so far (including `bob`'s prior messages), and vice versa. The agents don't have separate state — they share the context. Their "personalities" come from their `given` blocks.
+
+More radical — branching into parallel worlds:
 
 ```
-let s~ = llm("...")
-print(s~)
-print(s~)         // COMPILE ERROR: s~ already consumed
+// Fork the stream into multiple possibilities
+{fork 3 as worlds
+  {gen story ~200 tokens}
+}
+// worlds[0], worlds[1], worlds[2] are three different stories,
+// all starting from the same context up to the fork point.
 
-let (a~, b~) = tee(s~)   // explicitly duplicate
-print(a~)
-log(b~)           // both work
+// Pick the best one (by some criterion)
+{select worlds by coherence}
 ```
+
+`fork` runs the same generation multiple times (different random seeds), producing divergent streams. `select` chooses one and makes it canonical. This is beam search elevated to a language construct.
 
 ---
 
-## The Runtime Model
+## Execution Model
 
-- **Green threads / fibers** — each stream runs on a lightweight fiber. Millions of concurrent streams are feasible.
-- **Cooperative scheduling** — fibers yield at token boundaries. No preemption needed since LLM tokens are natural yield points.
-- **Backpressure** — if a consumer is slow, the producer pauses. No unbounded buffering. For LLMs, this means the HTTP response body simply isn't read until the consumer is ready.
-- **Connection pooling** — multiple LLM calls to the same provider share HTTP/2 connections.
-- **Garbage collection** — past tokens in a stream are GC'd once consumed, unless `buffer()` or `cache()` is used. A stream processing 100K tokens doesn't need 100K tokens of memory.
+A streaming program executes like this:
+
+1. Start with an empty emission stream (or a `given` preamble).
+2. Walk the program structure top-to-bottom.
+3. Literal text → emit directly to the stream.
+4. `gen` → invoke the LLM with current context + constraint, emit generated tokens.
+5. `match` → read the referenced emission, take the matching branch.
+6. `for`/`repeat` → expand the body the appropriate number of times.
+7. Pattern instantiation → expand the pattern body inline.
+8. At each step, the full emission history is the context for the next step.
+
+The program IS the output. Execution IS generation. There is no separate "return value." The stream of emitted tokens is the entire result.
+
+This is what makes it a paradigm, not a library:
+- In procedural: you execute statements to produce side effects.
+- In functional: you evaluate expressions to produce values.
+- In streaming: **you generate tokens to produce... tokens.** The process is the product.
 
 ---
 
-## Complete Example: Streaming Research Agent
+## What "Debugging" Means
 
-Putting it all together — a research agent that searches, reads, and synthesizes, all streaming:
+In procedural: step through statements, inspect variable values at each point.
+In functional: trace expression reduction, see intermediate forms.
+In streaming: **scrub through the emission timeline.**
+
+A debugger for this language would be a timeline — like a video scrubber — showing:
+- The emission stream at each point (what's been generated so far)
+- The constraint active at each `gen` (what was the grammar?)
+- The probability distribution at each token (what else could have been generated?)
+- The context window contents (what was the LLM "seeing"?)
+- Branch points (where did a `match` go? what were the alternatives?)
+- Fork points (how did parallel worlds diverge?)
+
+It's closer to a music sequencer or a video editor than a traditional debugger. You're inspecting a *trajectory*, not a state.
+
+---
+
+## What "Testing" Means
+
+Programs are non-deterministic. Every execution produces different output. So testing is statistical, not exact.
 
 ```
-stream fn research(question: string) -> string~ {
-    // Step 1: Generate search queries (streaming)
-    let queries~ = llm("Generate 3 search queries for: {question}")~
-                   |> lines
-                   |> take(3)
+test "letter always includes a date when accepted"
+  runs=100
+  assert /\d{4}-\d{2}-\d{2}/ in output when decision == "accepted"
+  confidence=0.95
 
-    // Step 2: Execute searches in parallel as queries arrive
-    let results~[] = queries~ |> map(q~ => {
-        let query = await q~
-        search(query)                    // returns SearchResult[]
-    }) |> parallel
+test "debate has balanced perspectives"
+  runs=50
+  assert sentiment(pro_args) > 0.3
+  assert sentiment(con_args) < -0.3
+  assert abs(length(pro_args) - length(con_args)) < 100
+```
 
-    // Step 3: Read top results
-    let contents~ = results~
-        |> flatten
-        |> take(5)
-        |> map(r => fetch(r.url))
-        |> parallel
+You don't test that a program produces a specific output. You test that the *distribution of outputs* satisfies properties. This is closer to property-based testing or statistical hypothesis testing than to unit testing.
 
-    // Step 4: Synthesize (starts as soon as all content is ready)
-    let context = await all(contents~)
-    yield llm("Based on these sources, answer: {question}\n\nSources:\n{context}")~
+Constraints (enum, regex, int range) can be tested structurally — the constrained decoder guarantees them. But semantic properties (coherence, relevance, balance) require running the program many times and checking statistical invariants.
+
+---
+
+## A Longer Example: Generated Adventure Game
+
+```
+pattern room(style)
+  {gen room_name ~5 tokens as name}
+
+  {gen description ~40 tokens conditioned_on(style)}
+
+  Exits: {gen exits json([enum("north","south","east","west"); 1..3]) as exits}
+
+  {gen detail ~20 tokens}
+
+pattern encounter()
+  You see {gen creature ~5 tokens as creature}.
+  It appears {gen demeanor enum("friendly", "hostile", "neutral") as mood}.
+
+  {match mood
+    "friendly" => {gen friendly_interaction ~40 tokens}
+    "hostile"  =>
+      Combat! You must {gen combat_choice enum("fight", "flee", "negotiate") as choice}.
+      {match choice
+        "fight"     => {gen fight_scene ~50 tokens}
+        "flee"      => {gen flee_scene ~30 tokens}
+        "negotiate" => {gen negotiate_scene ~40 tokens}
+      }
+    "neutral" => {gen neutral_interaction ~30 tokens}
+  }
+
+// Main program
+# The Caverns of {gen cavern_name ~3 tokens}
+
+You are {gen player_desc ~10 tokens}. You have entered the caverns seeking
+{gen motivation ~10 tokens}.
+
+{for i in 1..{gen depth int(3..7)}
+  ## Room {i}
+  {room(cavern_name)}
+
+  {gen transition ~15 tokens}
+
+  {match {gen has_encounter enum("yes","no")}
+    "yes" => {encounter()}
+    "no"  => The room is empty but {gen atmosphere ~15 tokens}.
+  }
 }
 
-// Usage
-let answer~ = research("What are the latest advances in fusion energy?")
-print(answer~)
-// Tokens start printing as soon as synthesis begins.
-// Total time: overlapped search + fetch + generation,
-// not sequential search THEN fetch THEN generation.
+## The Final Chamber
+{gen climax ~100 tokens conditioned_on(motivation, cavern_name)}
+
+{gen ending enum("triumph", "tragedy", "mystery") as ending}
+{match ending
+  "triumph" => {gen triumph ~50 tokens}
+  "tragedy" => {gen tragedy ~50 tokens}
+  "mystery" => {gen mystery ~50 tokens}
+}
 ```
+
+Every execution of this program produces a different adventure. The number of rooms, the creatures, the combat choices, the ending — all generated. But the *structure* is specified by the programmer: rooms have names, descriptions, and exits; encounters have creatures with moods; the game has a rising action and a climax. The programmer is an architect of possibility spaces, not a determiner of outcomes.
 
 ---
 
-## What This Language Is NOT
+## Relationship to Existing Work
 
-**Not a general-purpose reactive programming framework.** Rx/Observables handle arbitrary event streams (mouse clicks, WebSocket messages) that can be empty, bursty, or infinite. This language is optimized for a narrower pattern: **monotonically accumulating values that converge** — which is exactly what LLM generation, incremental parsing, and streaming computation produce.
+**LMQL, Guidance, SGLang** — These are the closest existing systems. They mix Python with constrained generation. But they're libraries within procedural languages, not a paradigm. The generation is the interesting part; the Python scaffolding is boilerplate. A streaming language would make the generation the *only* part.
 
-**Not just async/await with extra steps.** Async/await gives you "pending or done." This gives you "pending, partially available, and done" — with the partial state being typed, composable, and actionable. The `~` type modifier captures something that `Promise<T>` cannot: the fact that there is useful intermediate state.
+**Template engines (Jinja, Handlebars)** — Structurally similar (literal text with holes) but fundamentally different: templates fill holes from a data source. Streaming programs fill holes from generation. Templates are deterministic; streaming programs are stochastic. Templates have fixed structure; streaming programs have generated structure.
 
-**Not dataflow programming / FBP.** Those systems route discrete messages between components. Here, the primitive is a *continuous accumulation* — a value that grows richer over time and eventually stabilizes. The mental model is closer to convergent CRDTs than to message queues.
+**Probabilistic programming (Stan, Pyro)** — Shares the property that programs specify distributions over outputs. But probabilistic programs describe distributions for inference (given observations, what are the latent variables?). Streaming programs describe distributions for generation (given structure, produce output).
+
+**Generative grammars (Chomsky, L-systems)** — The closest theoretical ancestor. A streaming program IS a generative grammar — a set of production rules that expand into output. The difference: the "rules" are not fixed alternatives with equal probability, but LLM-weighted continuations conditioned on context.
+
+---
+
+## The Philosophical Point
+
+Every programming paradigm embeds a metaphor for what computation *is*:
+- Procedural: computation is **following instructions**
+- Functional: computation is **evaluating mathematical expressions**
+- Logic: computation is **proving theorems**
+- Streaming: computation is **generating text**
+
+The last one is new because the computational substrate is new. You can't have a streaming paradigm without a generative model to serve as the runtime. The LLM IS the execution engine — the way a CPU is the execution engine for procedural programs and a reduction engine is the execution engine for functional programs.
+
+The programmer's role shifts accordingly:
+- Procedural programmer: writes the steps
+- Functional programmer: writes the transformations
+- Streaming programmer: **writes the scaffolding** — the structure, the constraints, the decision points — and lets the generative process fill in the substance
+
+The program is a blueprint for a category of possible outputs. Execution picks one from that space. The programmer's art is in designing the space — tight enough to be useful, loose enough to be surprising.
 
 ---
 
 ## Open Questions
 
-1. **How deep does `~` distribute?** If you have `Map<string, int[]>~`, is each key a `string~`? Each array element an `int~`? How deep does the incremental structure go? Probably needs explicit depth control.
+**Is this Turing-complete?** Probably not in the traditional sense (and that might be fine). It's complete with respect to the class of structured generation tasks. Adding escape hatches to a host language (like LMQL does with Python) would give full generality, but might dilute the paradigm.
 
-2. **Speculative execution.** If downstream starts processing based on partial data, and later tokens invalidate the assumption, should the language support rollback? CPU speculative execution suggests yes, but the complexity is high.
+**What about I/O?** A pure streaming program just emits text. But practical programs need to fetch data, call APIs, read files. One approach: `gen` blocks can be constrained to emit function call syntax, and the runtime intercepts and executes them, feeding results back into context. This is tool use, but as a language-level concept.
 
-3. **Persistence and replay.** Should streams be replayable? A `buffer`ed stream could be saved to disk and replayed — useful for debugging and testing. But this conflicts with the affine-by-default design.
+**How do you handle long context?** The emission stream IS the context window. For long programs, you hit the context limit. The runtime needs a strategy: summarization, retrieval, sliding window. This is a runtime concern, but the language might need constructs for it (`forget`, `summarize_above`, context windowing annotations).
 
-4. **Integration with existing ecosystems.** How does `string~` interop with a function expecting `string`? Implicit `await` (like implicit `.unwrap()`)? Or explicit everywhere? The subtyping rule `T <: T~` helps but the reverse direction (`T~ → T`) is the question.
+**Can streaming programs compose with conventional programs?** A streaming program could be invoked from Python as a generator. A Python function could be invoked from a streaming program as a tool. The boundary is where deterministic computation meets stochastic generation.
 
-5. **Debugging.** How do you debug a pipeline of streaming transformations? Need a time-travel debugger that can show the state of every stream at any point in time. Probably a visual tool, not a text-based REPL.
-
-6. **What is the compilation target?** Does this compile to JavaScript/WASM (for browser use), native code, or is it interpreted? The green thread runtime suggests either native (like Go) or a custom VM.
-
-7. **Backpressure across LLM calls.** If model A streams into model B, but model B's API doesn't support incremental prompts, the runtime must buffer. How does the language surface this forced-await to the programmer? Should it be invisible (simpler) or explicit (more honest)?
-
----
-
-## Why This Matters
-
-The current way we interact with LLMs from code is essentially: call function, get string back, parse string, do something. Streaming is bolted on as an optimization. But as LLM calls become the dominant I/O operation in many applications — replacing database queries and API calls as the primary source of data — the "call and wait" model becomes increasingly inadequate.
-
-A streaming-first language wouldn't just make LLM code more ergonomic. It would change how we think about LLM composition, enabling patterns that are theoretically possible today but practically too painful to implement: incremental validation, early abort on bad outputs, parallel speculative generation, real-time cost control, and fluid multi-agent pipelines where data flows continuously rather than in discrete request-response pairs.
-
-The `~` type modifier is a small syntactic addition, but it represents a large semantic shift: from "values that are" to "values that are becoming." For a world where the most important computation is an LLM gradually producing tokens, that shift seems overdue.
+**What's the cost model?** Every `gen` costs money (API tokens). The language should make cost visible — perhaps every program has an estimated cost range, and the type checker can warn when a `for` loop with generated bounds could produce unbounded cost.
