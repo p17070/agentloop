@@ -414,6 +414,24 @@ export interface ProviderEntry {
   streamTerminator?: string;
 }
 
+/**
+ * User-supplied overrides for a built-in or custom provider.
+ * Any field set here takes precedence over the built-in defaults.
+ *
+ * Common use cases:
+ *  - Point at a custom endpoint (Azure OpenAI, self-hosted proxy, LiteLLM)
+ *  - Inject extra headers (auth tokens, org IDs, tracing headers)
+ *  - Supply the API key directly instead of reading from env
+ */
+export interface ProviderOverrides {
+  /** Override the provider's base URL (e.g. your Azure OpenAI endpoint). */
+  baseURL?: string;
+  /** Extra headers merged on top of the provider defaults. */
+  headers?: Record<string, string>;
+  /** API key — if set, used instead of the key from env / client config. */
+  apiKey?: string;
+}
+
 // ─── Usage ───────────────────────────────────────────────────────────────────
 
 /** Normalized usage information */

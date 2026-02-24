@@ -63,6 +63,7 @@ export type {
 
   // Provider config
   ProviderEntry,
+  ProviderOverrides,
 
   // Model catalog types
   ProviderId,
@@ -75,7 +76,7 @@ export type {
 export { LLMError, classifyError } from "./errors.js";
 
 // ─── Registry ───────────────────────────────────────────────────────────────
-export { PROVIDERS, filterParams, buildHeaders } from "./registry.js";
+export { PROVIDERS, filterParams, buildHeaders, resolveProvider, registerProvider } from "./registry.js";
 
 // ─── Models ────────────────────────────────────────────────────────────────
 export {
