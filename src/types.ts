@@ -189,6 +189,179 @@ export interface CharLocationCitation {
   endCharIndex: number;
 }
 
+// ─── Request ────────────────────────────────────────────────────────────────
+
+/** Output format for structured responses */
+export type ResponseFormat =
+  | { type: "text" }
+  | { type: "json_object" }
+  | { type: "json_schema"; json_schema: { name: string; strict?: boolean; schema: Record<string, unknown> } };
+
+/** Unified chat request — the single format users write, regardless of provider */
+export interface ChatRequest {
+  model: string;                          // "provider/model-id"
+  messages: ChatMessage[];
+
+  // Generation params
+  temperature?: number;
+  top_p?: number;
+  max_tokens?: number;
+  stop?: string | string[];
+  seed?: number;
+  n?: number;
+
+  // Penalties
+  frequency_penalty?: number;
+  presence_penalty?: number;
+
+  // Tools
+  tools?: ToolDefinition[];
+  tool_choice?: "auto" | "required" | "none" | { type: "function"; function: { name: string } };
+  parallel_tool_calls?: boolean;
+
+  // Output format
+  response_format?: ResponseFormat;
+
+  // Observability
+  logprobs?: boolean;
+  top_logprobs?: number;
+  logit_bias?: Record<string, number>;
+
+  // Streaming
+  stream?: boolean;
+  stream_options?: { include_usage: boolean };
+
+  // Metadata
+  user?: string;
+  metadata?: Record<string, unknown>;     // pass-through to provider
+}
+
+// ─── Response ───────────────────────────────────────────────────────────────
+
+/** Normalized chat response — same shape regardless of provider */
+export interface ChatResponse {
+  id: string;
+  provider: string;
+  model: string;
+  choices: Choice[];
+  usage: Usage;
+  providerMetadata?: Record<string, unknown>;
+}
+
+export interface Choice {
+  index: number;
+  content: ResponsePart[];
+  finishReason: FinishReason;
+}
+
+// ─── Streaming Events ───────────────────────────────────────────────────────
+
+export type ChatStreamEvent =
+  | ContentStartEvent
+  | ContentDeltaEvent
+  | ContentDoneEvent
+  | MessageStartEvent
+  | MessageDeltaEvent
+  | MessageDoneEvent
+  | UsageEvent
+  | ErrorEvent;
+
+export interface MessageStartEvent {
+  type: "message.start";
+  id: string;
+  model: string;
+}
+
+export interface ContentStartEvent {
+  type: "content.start";
+  choiceIndex: number;
+  partIndex: number;
+  part: ResponsePartStart;
+}
+
+export interface ContentDeltaEvent {
+  type: "content.delta";
+  choiceIndex: number;
+  partIndex: number;
+  delta: ResponsePartDelta;
+}
+
+export interface ContentDoneEvent {
+  type: "content.done";
+  choiceIndex: number;
+  partIndex: number;
+  part: ResponsePart;
+}
+
+export interface MessageDeltaEvent {
+  type: "message.delta";
+  choiceIndex: number;
+  finishReason: FinishReason;
+}
+
+export interface MessageDoneEvent {
+  type: "message.done";
+  response: ChatResponse;
+}
+
+export interface UsageEvent {
+  type: "usage";
+  usage: Usage;
+}
+
+export interface ErrorEvent {
+  type: "error";
+  error: unknown;
+}
+
+export type ResponsePartStart =
+  | { type: "text" }
+  | { type: "tool_call"; id: string; name: string }
+  | { type: "thinking" }
+  | { type: "image"; mimeType: string }
+  | { type: "audio"; mimeType: string }
+  | { type: "code_execution"; language: string }
+  | { type: "server_tool_call"; id: string; name: string };
+
+export type ResponsePartDelta =
+  | { type: "text"; text: string }
+  | { type: "tool_call.arguments"; arguments: string }
+  | { type: "thinking"; thinking: string }
+  | { type: "thinking.signature"; signature: string }
+  | { type: "image"; data: string }
+  | { type: "audio"; data: string }
+  | { type: "audio.transcript"; transcript: string }
+  | { type: "citation"; citation: Citation };
+
+// ─── Embeddings ─────────────────────────────────────────────────────────────
+
+export interface EmbedRequest {
+  model: string;
+  input: string | string[];
+  dimensions?: number;
+}
+
+export interface EmbedResponse {
+  model: string;
+  provider: string;
+  embeddings: number[][];
+  usage: { prompt_tokens: number; total_tokens: number };
+}
+
+// ─── Provider Config ────────────────────────────────────────────────────────
+
+export interface ProviderEntry {
+  baseURL: string;
+  auth: "bearer" | "x-api-key" | "x-goog-api-key" | "none";
+  transform?: "anthropic" | "google";
+  strip?: string[];
+  rename?: Record<string, string>;
+  clamp?: Record<string, number | [number, number]>;
+  defaults?: Record<string, unknown>;
+  headers?: Record<string, string>;
+  streamTerminator?: string;
+}
+
 // ─── Usage ───────────────────────────────────────────────────────────────────
 
 /** Normalized usage information */
@@ -206,5 +379,8 @@ export interface UsageDetails {
   /** Tokens written to cache (Anthropic cache_creation_input_tokens) */
   cacheWriteTokens?: number;
   audioTokens?: number;
+  audioPromptTokens?: number;
+  audioCompletionTokens?: number;
+  promptTokensByModality?: Record<string, number>;
   completionTokensByModality?: Record<string, number>;
 }
