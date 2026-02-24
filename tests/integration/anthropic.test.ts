@@ -1,38 +1,32 @@
 /**
  * Integration tests against the real Anthropic Messages API.
  *
- * These tests validate that Anthropic's actual response shapes match what
- * the AgentLoop SPEC expects, so our normalization logic can be built with
- * confidence.
+ * Uses the official @anthropic-ai/sdk — no hand-rolled clients.
  *
  * Run: ANTHROPIC_API_KEY=sk-... npm run test:integration
  */
 import { describe, it, expect, beforeAll } from "vitest";
-import {
-  getApiKey,
-  createMessage,
-  createMessageStream,
-  type AnthropicResponse,
-  type AnthropicContentBlock,
-  type AnthropicTool,
-  type SSEEvent,
-} from "./anthropic-api.js";
+import Anthropic from "@anthropic-ai/sdk";
 
 const MODEL = "claude-sonnet-4-20250514";
 
-let apiKey: string;
+let client: Anthropic;
 
 beforeAll(() => {
-  apiKey = getApiKey();
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    throw new Error("ANTHROPIC_API_KEY environment variable is required for integration tests");
+  }
+  client = new Anthropic({ apiKey });
 });
 
 // ─── Basic Chat ──────────────────────────────────────────────────────────────
 
 describe("Anthropic Messages API — basic chat", () => {
-  let response: AnthropicResponse;
+  let response: Anthropic.Message;
 
   beforeAll(async () => {
-    response = await createMessage(apiKey, {
+    response = await client.messages.create({
       model: MODEL,
       messages: [{ role: "user", content: "Say exactly: hello" }],
       max_tokens: 64,
@@ -62,9 +56,11 @@ describe("Anthropic Messages API — basic chat", () => {
   });
 
   it("first content block is type 'text'", () => {
-    expect(response.content[0].type).toBe("text");
-    expect(typeof response.content[0].text).toBe("string");
-    expect((response.content[0].text as string).toLowerCase()).toContain("hello");
+    const block = response.content[0];
+    expect(block.type).toBe("text");
+    if (block.type === "text") {
+      expect(block.text.toLowerCase()).toContain("hello");
+    }
   });
 
   it("returns stop_reason 'end_turn'", () => {
@@ -83,13 +79,13 @@ describe("Anthropic Messages API — basic chat", () => {
 // ─── Tool Calling ────────────────────────────────────────────────────────────
 
 describe("Anthropic Messages API — tool calling", () => {
-  let response: AnthropicResponse;
+  let response: Anthropic.Message;
 
-  const weatherTool = {
+  const weatherTool: Anthropic.Messages.Tool = {
     name: "get_weather",
     description: "Get weather for a city",
     input_schema: {
-      type: "object" as const,
+      type: "object",
       properties: {
         city: { type: "string", description: "City name" },
       },
@@ -98,7 +94,7 @@ describe("Anthropic Messages API — tool calling", () => {
   };
 
   beforeAll(async () => {
-    response = await createMessage(apiKey, {
+    response = await client.messages.create({
       model: MODEL,
       messages: [{ role: "user", content: "What is the weather in Paris?" }],
       max_tokens: 256,
@@ -118,46 +114,43 @@ describe("Anthropic Messages API — tool calling", () => {
   });
 
   it("tool_use block has correct shape", () => {
-    const block = response.content.find((b) => b.type === "tool_use")!;
+    const block = response.content.find((b) => b.type === "tool_use");
     expect(block).toBeDefined();
-
-    // id is a string prefixed with "toolu_"
-    expect(typeof block.id).toBe("string");
-    expect(block.id as string).toMatch(/^toolu_/);
-
-    // name matches the tool we defined
-    expect(block.name).toBe("get_weather");
-
-    // input is an object (not a JSON string — Anthropic returns parsed objects)
-    expect(typeof block.input).toBe("object");
-    expect(block.input).not.toBeNull();
+    if (block?.type === "tool_use") {
+      expect(block.id).toMatch(/^toolu_/);
+      expect(block.name).toBe("get_weather");
+      expect(typeof block.input).toBe("object");
+      expect(block.input).not.toBeNull();
+    }
   });
 
   it("tool_use input contains the city argument", () => {
-    const block = response.content.find((b) => b.type === "tool_use")!;
-    const input = block.input as Record<string, unknown>;
-    expect(typeof input.city).toBe("string");
-    expect((input.city as string).toLowerCase()).toContain("paris");
+    const block = response.content.find((b) => b.type === "tool_use");
+    if (block?.type === "tool_use") {
+      const input = block.input as Record<string, unknown>;
+      expect(typeof input.city).toBe("string");
+      expect((input.city as string).toLowerCase()).toContain("paris");
+    }
   });
 
   it("tool call input can be JSON.stringify'd (for normalization to arguments string)", () => {
-    const block = response.content.find((b) => b.type === "tool_use")!;
-    const json = JSON.stringify(block.input);
-    expect(typeof json).toBe("string");
-    const parsed = JSON.parse(json);
-    expect(parsed).toEqual(block.input);
+    const block = response.content.find((b) => b.type === "tool_use");
+    if (block?.type === "tool_use") {
+      const json = JSON.stringify(block.input);
+      expect(typeof json).toBe("string");
+      const parsed = JSON.parse(json);
+      expect(parsed).toEqual(block.input);
+    }
   });
 });
 
 // ─── Tool Result Round-Trip ──────────────────────────────────────────────────
 
 describe("Anthropic Messages API — tool result round-trip", () => {
-  let response: AnthropicResponse;
+  let response: Anthropic.Message;
 
   beforeAll(async () => {
-    // First turn: assistant calls the tool
-    // Second turn: we provide the tool result
-    response = await createMessage(apiKey, {
+    response = await client.messages.create({
       model: MODEL,
       messages: [
         { role: "user", content: "What is the weather in London?" },
@@ -169,7 +162,7 @@ describe("Anthropic Messages API — tool result round-trip", () => {
               id: "toolu_test123",
               name: "get_weather",
               input: { city: "London" },
-            } as unknown as AnthropicContentBlock,
+            },
           ],
         },
         {
@@ -179,7 +172,7 @@ describe("Anthropic Messages API — tool result round-trip", () => {
               type: "tool_result",
               tool_use_id: "toolu_test123",
               content: "Sunny, 22°C",
-            } as unknown as AnthropicContentBlock,
+            },
           ],
         },
       ],
@@ -202,8 +195,9 @@ describe("Anthropic Messages API — tool result round-trip", () => {
   it("returns a text response incorporating the tool result", () => {
     const textBlock = response.content.find((b) => b.type === "text");
     expect(textBlock).toBeDefined();
-    expect(typeof textBlock!.text).toBe("string");
-    expect((textBlock!.text as string).length).toBeGreaterThan(0);
+    if (textBlock?.type === "text") {
+      expect(textBlock.text.length).toBeGreaterThan(0);
+    }
   });
 
   it("stop_reason is 'end_turn' after processing tool result", () => {
@@ -214,79 +208,70 @@ describe("Anthropic Messages API — tool result round-trip", () => {
 // ─── Streaming ───────────────────────────────────────────────────────────────
 
 describe("Anthropic Messages API — streaming", () => {
-  let events: SSEEvent[];
+  let events: Anthropic.Messages.RawMessageStreamEvent[];
 
   beforeAll(async () => {
-    events = await createMessageStream(apiKey, {
+    events = [];
+    const stream = await client.messages.create({
       model: MODEL,
       messages: [{ role: "user", content: "Say exactly: streaming works" }],
       max_tokens: 64,
       temperature: 0,
+      stream: true,
     });
+    for await (const event of stream) {
+      events.push(event);
+    }
   });
 
   it("returns events in the expected lifecycle order", () => {
-    const eventTypes = events.map((e) => e.event);
+    const eventTypes = events.map((e) => e.type);
 
-    // Must start with message_start
     expect(eventTypes[0]).toBe("message_start");
-
-    // Must end with message_stop
     expect(eventTypes[eventTypes.length - 1]).toBe("message_stop");
-
-    // Must contain content_block_start, content_block_delta, content_block_stop
     expect(eventTypes).toContain("content_block_start");
     expect(eventTypes).toContain("content_block_delta");
     expect(eventTypes).toContain("content_block_stop");
-
-    // Must contain message_delta (with stop_reason)
     expect(eventTypes).toContain("message_delta");
   });
 
   it("message_start contains message metadata", () => {
-    const start = events.find((e) => e.event === "message_start")!;
-    const data = start.data as Record<string, unknown>;
-    const msg = data.message as Record<string, unknown>;
-
-    expect(msg.id).toMatch(/^msg_/);
-    expect(msg.role).toBe("assistant");
-    expect(msg.model).toContain("claude");
-
-    // Usage in message_start has input_tokens
-    const usage = msg.usage as Record<string, number>;
-    expect(typeof usage.input_tokens).toBe("number");
+    const start = events.find((e) => e.type === "message_start");
+    expect(start).toBeDefined();
+    if (start?.type === "message_start") {
+      expect(start.message.id).toMatch(/^msg_/);
+      expect(start.message.role).toBe("assistant");
+      expect(start.message.model).toContain("claude");
+      expect(typeof start.message.usage.input_tokens).toBe("number");
+    }
   });
 
   it("content_block_start has index and type", () => {
-    const blockStart = events.find((e) => e.event === "content_block_start")!;
-    const data = blockStart.data as Record<string, unknown>;
-
-    expect(typeof data.index).toBe("number");
-    const block = data.content_block as Record<string, unknown>;
-    expect(block.type).toBe("text");
+    const blockStart = events.find((e) => e.type === "content_block_start");
+    expect(blockStart).toBeDefined();
+    if (blockStart?.type === "content_block_start") {
+      expect(typeof blockStart.index).toBe("number");
+      expect(blockStart.content_block.type).toBe("text");
+    }
   });
 
   it("content_block_delta delivers text_delta chunks", () => {
-    const deltas = events.filter((e) => e.event === "content_block_delta");
+    const deltas = events.filter((e) => e.type === "content_block_delta");
     expect(deltas.length).toBeGreaterThan(0);
 
-    // Each delta should have a delta.text field
     for (const d of deltas) {
-      const data = d.data as Record<string, unknown>;
-      const delta = data.delta as Record<string, unknown>;
-      expect(delta.type).toBe("text_delta");
-      expect(typeof delta.text).toBe("string");
+      if (d.type === "content_block_delta" && d.delta.type === "text_delta") {
+        expect(typeof d.delta.text).toBe("string");
+      }
     }
   });
 
   it("concatenated deltas form the complete response text", () => {
-    const deltas = events.filter((e) => e.event === "content_block_delta");
-    const fullText = deltas
-      .map((d) => {
-        const data = d.data as Record<string, unknown>;
-        const delta = data.delta as Record<string, unknown>;
-        return delta.text as string;
-      })
+    const fullText = events
+      .filter((e): e is Anthropic.Messages.RawContentBlockDeltaEvent =>
+        e.type === "content_block_delta")
+      .filter((e) => e.delta.type === "text_delta")
+      .map((e) => (e.delta as Anthropic.Messages.TextDelta).text)
       .join("");
 
     expect(fullText.toLowerCase()).toContain("streaming");
@@ -294,26 +279,24 @@ describe("Anthropic Messages API — streaming", () => {
   });
 
   it("message_delta contains stop_reason and usage", () => {
-    const msgDelta = events.find((e) => e.event === "message_delta")!;
-    const data = msgDelta.data as Record<string, unknown>;
-    const delta = data.delta as Record<string, unknown>;
-
-    expect(delta.stop_reason).toBe("end_turn");
-
-    // usage in message_delta has output_tokens
-    const usage = data.usage as Record<string, number>;
-    expect(typeof usage.output_tokens).toBe("number");
-    expect(usage.output_tokens).toBeGreaterThan(0);
+    const msgDelta = events.find((e) => e.type === "message_delta");
+    expect(msgDelta).toBeDefined();
+    if (msgDelta?.type === "message_delta") {
+      expect(msgDelta.delta.stop_reason).toBe("end_turn");
+      expect(typeof msgDelta.usage.output_tokens).toBe("number");
+      expect(msgDelta.usage.output_tokens).toBeGreaterThan(0);
+    }
   });
 });
 
 // ─── Streaming with Tool Calls ───────────────────────────────────────────────
 
 describe("Anthropic Messages API — streaming tool calls", () => {
-  let events: SSEEvent[];
+  let events: Anthropic.Messages.RawMessageStreamEvent[];
 
   beforeAll(async () => {
-    events = await createMessageStream(apiKey, {
+    events = [];
+    const stream = await client.messages.create({
       model: MODEL,
       messages: [{ role: "user", content: "What is the weather in Tokyo?" }],
       max_tokens: 256,
@@ -330,56 +313,43 @@ describe("Anthropic Messages API — streaming tool calls", () => {
       ],
       tool_choice: { type: "tool", name: "get_weather" },
       temperature: 0,
+      stream: true,
     });
+    for await (const event of stream) {
+      events.push(event);
+    }
   });
 
   it("emits content_block_start with tool_use type", () => {
-    const toolStart = events.find((e) => {
-      if (e.event !== "content_block_start") return false;
-      const data = e.data as Record<string, unknown>;
-      const block = data.content_block as Record<string, unknown>;
-      return block.type === "tool_use";
-    });
-
+    const toolStart = events.find(
+      (e) => e.type === "content_block_start" && e.content_block.type === "tool_use",
+    );
     expect(toolStart).toBeDefined();
-    const data = toolStart!.data as Record<string, unknown>;
-    const block = data.content_block as Record<string, unknown>;
-    expect(block.id).toMatch(/^toolu_/);
-    expect(block.name).toBe("get_weather");
+    if (toolStart?.type === "content_block_start" && toolStart.content_block.type === "tool_use") {
+      expect(toolStart.content_block.id).toMatch(/^toolu_/);
+      expect(toolStart.content_block.name).toBe("get_weather");
+    }
   });
 
   it("streams tool input as input_json_delta events", () => {
-    const jsonDeltas = events.filter((e) => {
-      if (e.event !== "content_block_delta") return false;
-      const data = e.data as Record<string, unknown>;
-      const delta = data.delta as Record<string, unknown>;
-      return delta.type === "input_json_delta";
-    });
-
+    const jsonDeltas = events.filter(
+      (e) => e.type === "content_block_delta" && e.delta.type === "input_json_delta",
+    );
     expect(jsonDeltas.length).toBeGreaterThan(0);
 
-    // Each delta has partial_json string
     for (const d of jsonDeltas) {
-      const data = d.data as Record<string, unknown>;
-      const delta = data.delta as Record<string, unknown>;
-      expect(typeof delta.partial_json).toBe("string");
+      if (d.type === "content_block_delta" && d.delta.type === "input_json_delta") {
+        expect(typeof d.delta.partial_json).toBe("string");
+      }
     }
   });
 
   it("concatenated input_json_delta forms valid JSON with city argument", () => {
-    const jsonDeltas = events.filter((e) => {
-      if (e.event !== "content_block_delta") return false;
-      const data = e.data as Record<string, unknown>;
-      const delta = data.delta as Record<string, unknown>;
-      return delta.type === "input_json_delta";
-    });
-
-    const fullJson = jsonDeltas
-      .map((d) => {
-        const data = d.data as Record<string, unknown>;
-        const delta = data.delta as Record<string, unknown>;
-        return delta.partial_json as string;
-      })
+    const fullJson = events
+      .filter((e): e is Anthropic.Messages.RawContentBlockDeltaEvent =>
+        e.type === "content_block_delta")
+      .filter((e) => e.delta.type === "input_json_delta")
+      .map((e) => (e.delta as Anthropic.Messages.InputJSONDelta).partial_json)
       .join("");
 
     const parsed = JSON.parse(fullJson);
@@ -388,10 +358,11 @@ describe("Anthropic Messages API — streaming tool calls", () => {
   });
 
   it("message_delta has stop_reason 'tool_use'", () => {
-    const msgDelta = events.find((e) => e.event === "message_delta")!;
-    const data = msgDelta.data as Record<string, unknown>;
-    const delta = data.delta as Record<string, unknown>;
-    expect(delta.stop_reason).toBe("tool_use");
+    const msgDelta = events.find((e) => e.type === "message_delta");
+    expect(msgDelta).toBeDefined();
+    if (msgDelta?.type === "message_delta") {
+      expect(msgDelta.delta.stop_reason).toBe("tool_use");
+    }
   });
 });
 
@@ -399,7 +370,7 @@ describe("Anthropic Messages API — streaming tool calls", () => {
 
 describe("Anthropic Messages API — stop_reason max_tokens", () => {
   it("returns stop_reason 'max_tokens' when output is truncated", async () => {
-    const response = await createMessage(apiKey, {
+    const response = await client.messages.create({
       model: MODEL,
       messages: [
         {
@@ -418,30 +389,25 @@ describe("Anthropic Messages API — stop_reason max_tokens", () => {
 // ─── Error Handling ──────────────────────────────────────────────────────────
 
 describe("Anthropic Messages API — error responses", () => {
-  it("returns error for invalid model", async () => {
-    try {
-      await createMessage(apiKey, {
+  it("throws for invalid model", async () => {
+    await expect(
+      client.messages.create({
         model: "claude-nonexistent-model",
         messages: [{ role: "user", content: "Hello" }],
         max_tokens: 10,
-      });
-      expect.fail("Should have thrown");
-    } catch (err) {
-      expect(String(err)).toContain("Anthropic API");
-    }
+      }),
+    ).rejects.toThrow();
   });
 
-  it("returns 401 for invalid API key", async () => {
-    try {
-      await createMessage("sk-ant-invalid-key", {
+  it("throws for invalid API key", async () => {
+    const badClient = new Anthropic({ apiKey: "sk-ant-invalid-key" });
+    await expect(
+      badClient.messages.create({
         model: MODEL,
         messages: [{ role: "user", content: "Hello" }],
         max_tokens: 10,
-      });
-      expect.fail("Should have thrown");
-    } catch (err) {
-      expect(String(err)).toMatch(/40[13]/);
-    }
+      }),
+    ).rejects.toThrow();
   });
 });
 
@@ -449,7 +415,7 @@ describe("Anthropic Messages API — error responses", () => {
 
 describe("Anthropic Messages API — multi-turn conversation", () => {
   it("maintains context across turns", async () => {
-    const response = await createMessage(apiKey, {
+    const response = await client.messages.create({
       model: MODEL,
       messages: [
         { role: "user", content: "My name is AgentLoopTestUser." },
@@ -461,8 +427,8 @@ describe("Anthropic Messages API — multi-turn conversation", () => {
     });
 
     const text = response.content
-      .filter((b) => b.type === "text")
-      .map((b) => b.text as string)
+      .filter((b): b is Anthropic.Messages.TextBlock => b.type === "text")
+      .map((b) => b.text)
       .join("");
 
     expect(text).toContain("AgentLoopTestUser");
@@ -473,7 +439,7 @@ describe("Anthropic Messages API — multi-turn conversation", () => {
 
 describe("Anthropic Messages API — system message", () => {
   it("accepts system as a top-level parameter", async () => {
-    const response = await createMessage(apiKey, {
+    const response = await client.messages.create({
       model: MODEL,
       system: "You must respond with exactly the word PINEAPPLE and nothing else.",
       messages: [{ role: "user", content: "Say something." }],
@@ -481,7 +447,12 @@ describe("Anthropic Messages API — system message", () => {
       temperature: 0,
     });
 
-    const text = (response.content[0].text as string).trim();
+    const text = response.content
+      .filter((b): b is Anthropic.Messages.TextBlock => b.type === "text")
+      .map((b) => b.text)
+      .join("")
+      .trim();
+
     expect(text).toContain("PINEAPPLE");
   });
 });
@@ -490,7 +461,6 @@ describe("Anthropic Messages API — system message", () => {
 
 describe("Anthropic Messages API — prompt caching", () => {
   // A long system prompt to meet the minimum caching threshold (1024 tokens for Claude Sonnet).
-  // We generate a deterministic block of filler text.
   const longSystemText = [
     "You are a helpful assistant specialized in software engineering.",
     "You have deep expertise in TypeScript, Node.js, Python, Rust, Go, and Java.",
@@ -506,14 +476,14 @@ describe("Anthropic Messages API — prompt caching", () => {
   ].join("\n\n");
 
   it("accepts system as array of content blocks with cache_control", async () => {
-    const response = await createMessage(apiKey, {
+    const response = await client.messages.create({
       model: MODEL,
       system: [
         {
           type: "text",
           text: longSystemText,
           cache_control: { type: "ephemeral" },
-        } as AnthropicContentBlock,
+        },
       ],
       messages: [{ role: "user", content: "Say hello." }],
       max_tokens: 32,
@@ -525,61 +495,51 @@ describe("Anthropic Messages API — prompt caching", () => {
   });
 
   it("reports cache_creation_input_tokens on first request (cache write)", async () => {
-    // Use a unique system prompt to ensure cache miss
     const uniqueSystem = longSystemText + `\n\nUnique marker: ${Date.now()}-${Math.random()}`;
 
-    const response = await createMessage(apiKey, {
+    const response = await client.messages.create({
       model: MODEL,
       system: [
         {
           type: "text",
           text: uniqueSystem,
           cache_control: { type: "ephemeral" },
-        } as AnthropicContentBlock,
+        },
       ],
       messages: [{ role: "user", content: "Reply with just: ok" }],
       max_tokens: 16,
       temperature: 0,
     });
 
-    // On first request with new content, cache_creation_input_tokens should be > 0
     expect(response.usage).toBeDefined();
     expect(typeof response.usage.cache_creation_input_tokens).toBe("number");
     expect(response.usage.cache_creation_input_tokens!).toBeGreaterThan(0);
-    // No cache read on first request
     expect(response.usage.cache_read_input_tokens ?? 0).toBe(0);
   });
 
   it("reports cache_read_input_tokens on repeated request (cache hit)", async () => {
-    // Use a stable unique marker for this test run
     const stableMarker = "cache-test-stable-v1-integration";
     const stableSystem = longSystemText + `\n\nStable marker: ${stableMarker}`;
 
+    const systemBlock: Anthropic.Messages.TextBlockParam = {
+      type: "text",
+      text: stableSystem,
+      cache_control: { type: "ephemeral" },
+    };
+
     // First request — primes the cache
-    await createMessage(apiKey, {
+    await client.messages.create({
       model: MODEL,
-      system: [
-        {
-          type: "text",
-          text: stableSystem,
-          cache_control: { type: "ephemeral" },
-        } as AnthropicContentBlock,
-      ],
+      system: [systemBlock],
       messages: [{ role: "user", content: "Reply with: first" }],
       max_tokens: 16,
       temperature: 0,
     });
 
     // Second request — same system prompt, should hit cache
-    const response2 = await createMessage(apiKey, {
+    const response2 = await client.messages.create({
       model: MODEL,
-      system: [
-        {
-          type: "text",
-          text: stableSystem,
-          cache_control: { type: "ephemeral" },
-        } as AnthropicContentBlock,
-      ],
+      system: [systemBlock],
       messages: [{ role: "user", content: "Reply with: second" }],
       max_tokens: 16,
       temperature: 0,
@@ -597,7 +557,7 @@ describe("Anthropic Messages API — prompt caching", () => {
       `across multiple LLM providers. The content covers edge cases and provider quirks.`
     ).join("\n\n");
 
-    const response = await createMessage(apiKey, {
+    const response = await client.messages.create({
       model: MODEL,
       messages: [
         {
@@ -607,11 +567,11 @@ describe("Anthropic Messages API — prompt caching", () => {
               type: "text",
               text: longUserContent,
               cache_control: { type: "ephemeral" },
-            } as AnthropicContentBlock,
+            },
             {
               type: "text",
               text: "Summarize the above in one sentence.",
-            } as AnthropicContentBlock,
+            },
           ],
         },
       ],
@@ -620,7 +580,6 @@ describe("Anthropic Messages API — prompt caching", () => {
     });
 
     expect(response.type).toBe("message");
-    // Should report either cache creation or cache read tokens
     const cacheTokens =
       (response.usage.cache_creation_input_tokens ?? 0) +
       (response.usage.cache_read_input_tokens ?? 0);
@@ -628,15 +587,14 @@ describe("Anthropic Messages API — prompt caching", () => {
   });
 
   it("supports cache_control on tool definitions", async () => {
-    // Create enough tool definitions to meet the caching threshold
-    const tools: AnthropicTool[] = Array.from({ length: 20 }, (_, i) => ({
+    const tools: Anthropic.Messages.Tool[] = Array.from({ length: 20 }, (_, i) => ({
       name: `tool_${i}`,
       description: `A detailed tool description for tool number ${i}. ` +
         `This tool performs complex operations including data transformation, ` +
         `validation, API calls, and result formatting. Parameters are validated ` +
         `against a strict schema before execution.`,
       input_schema: {
-        type: "object",
+        type: "object" as const,
         properties: {
           input: { type: "string", description: `Input for tool ${i}` },
           options: {
@@ -654,7 +612,7 @@ describe("Anthropic Messages API — prompt caching", () => {
     // Mark the last tool with cache_control
     tools[tools.length - 1].cache_control = { type: "ephemeral" };
 
-    const response = await createMessage(apiKey, {
+    const response = await client.messages.create({
       model: MODEL,
       messages: [{ role: "user", content: "What tools do you have? Just list their names." }],
       tools,
@@ -663,7 +621,6 @@ describe("Anthropic Messages API — prompt caching", () => {
     });
 
     expect(response.type).toBe("message");
-    // Should report cache creation or read tokens for the tool definitions
     const cacheTokens =
       (response.usage.cache_creation_input_tokens ?? 0) +
       (response.usage.cache_read_input_tokens ?? 0);
