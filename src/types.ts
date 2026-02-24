@@ -348,6 +348,58 @@ export interface EmbedResponse {
   usage: { prompt_tokens: number; total_tokens: number };
 }
 
+// ─── Model Catalog ─────────────────────────────────────────────────────────
+
+/** Provider identifier — matches keys in the PROVIDERS registry */
+export type ProviderId =
+  | "openai" | "anthropic" | "google" | "groq" | "together"
+  | "mistral" | "deepseek" | "fireworks" | "perplexity"
+  | "ollama" | "cohere" | "xai";
+
+/** Model capability category */
+export type ModelCategory =
+  | "flagship"    // best overall quality
+  | "fast"        // optimized for speed/cost
+  | "reasoning"   // chain-of-thought / extended thinking
+  | "code"        // optimized for code generation
+  | "vision"      // image understanding
+  | "search"      // web search / RAG
+  | "embedding"   // text embeddings
+  | "image"       // image generation
+  | "audio";      // speech / audio
+
+/** Metadata about a single model */
+export interface ModelInfo {
+  /** Full model ID as passed to the API (e.g. "gpt-4o", "claude-sonnet-4-20250514") */
+  id: string;
+  /** Human-readable display name (e.g. "GPT-4o", "Claude Sonnet 4") */
+  name: string;
+  /** Provider this model belongs to */
+  provider: ProviderId;
+  /** Primary capability categories */
+  categories: ModelCategory[];
+  /** Maximum context window in tokens */
+  contextWindow: number;
+  /** Maximum output tokens (if known) */
+  maxOutputTokens?: number;
+  /** Whether the model is the recommended default for this provider */
+  isDefault?: boolean;
+  /** Whether the model is deprecated or approaching retirement */
+  deprecated?: boolean;
+}
+
+/** Summary info about a provider */
+export interface ProviderInfo {
+  /** Provider identifier */
+  id: ProviderId;
+  /** Human-readable display name */
+  name: string;
+  /** Environment variable name for the API key */
+  apiKeyEnv: string;
+  /** Website URL */
+  website: string;
+}
+
 // ─── Provider Config ────────────────────────────────────────────────────────
 
 export interface ProviderEntry {

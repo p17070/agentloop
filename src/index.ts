@@ -63,6 +63,12 @@ export type {
 
   // Provider config
   ProviderEntry,
+
+  // Model catalog types
+  ProviderId,
+  ModelCategory,
+  ModelInfo,
+  ProviderInfo,
 } from "./types.js";
 
 // ─── Errors ─────────────────────────────────────────────────────────────────
@@ -70,6 +76,23 @@ export { LLMError, classifyError } from "./errors.js";
 
 // ─── Registry ───────────────────────────────────────────────────────────────
 export { PROVIDERS, filterParams, buildHeaders } from "./registry.js";
+
+// ─── Models ────────────────────────────────────────────────────────────────
+export {
+  PROVIDER_INFO,
+  MODEL_CATALOG,
+  listProviders,
+  getProvider,
+  listModels,
+  listModelsByProvider,
+  listModelsByCategory,
+  getDefaultModel,
+  resolveModel,
+  qualifiedModelId,
+  modelsByProvider,
+  suggestedModels,
+  searchModels,
+} from "./models.js";
 
 // ─── Transforms ─────────────────────────────────────────────────────────────
 export { toAnthropicRequest } from "./transforms/anthropic.js";

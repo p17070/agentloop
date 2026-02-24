@@ -76,6 +76,11 @@ export const PROVIDERS: Record<string, ProviderEntry> = {
     auth: "x-goog-api-key",
     transform: "google",
   },
+
+  xai: {
+    baseURL: "https://api.x.ai/v1",
+    auth: "bearer",
+  },
 };
 
 // ─── Parameter Filter ───────────────────────────────────────────────────────
