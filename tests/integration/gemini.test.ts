@@ -234,7 +234,7 @@ describe("Gemini API — streaming", () => {
 
   beforeAll(async () => {
     const model = getModel({
-      generationConfig: { maxOutputTokens: 64, temperature: 0 },
+      generationConfig: { maxOutputTokens: 256, temperature: 0 },
     });
     const streamResult = await model.generateContentStream("Say exactly: streaming works");
     chunks = [];
