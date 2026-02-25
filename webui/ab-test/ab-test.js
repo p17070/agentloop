@@ -1,26 +1,41 @@
 /**
- * AgentLoop A/B Testing Arena
+ * AgentLoop Model Arena — N-way A/B Testing
  *
- * Send the same prompt to two models simultaneously, compare responses
- * side-by-side, vote on quality, and track results over time.
+ * Send the same prompt to 2–8 models simultaneously, compare responses
+ * side-by-side, vote on the best, and track results over time.
  *
  * Reuses providers.js for API dispatch (buildRequest, getStreamParser, etc.)
  */
 
+// ─── Constants ──────────────────────────────────────────────────────────────
+
+const MAX_SLOTS = 8;
+const MIN_SLOTS = 2;
+const SLOT_COLORS = [
+  { color: "var(--slot-0)", bg: "var(--slot-0-bg)" },
+  { color: "var(--slot-1)", bg: "var(--slot-1-bg)" },
+  { color: "var(--slot-2)", bg: "var(--slot-2-bg)" },
+  { color: "var(--slot-3)", bg: "var(--slot-3-bg)" },
+  { color: "var(--slot-4)", bg: "var(--slot-4-bg)" },
+  { color: "var(--slot-5)", bg: "var(--slot-5-bg)" },
+  { color: "var(--slot-6)", bg: "var(--slot-6-bg)" },
+  { color: "var(--slot-7)", bg: "var(--slot-7-bg)" },
+];
+const SLOT_LETTERS = "ABCDEFGH";
+
+const DEFAULT_PROVIDERS = ["openai", "anthropic", "google", "groq", "together", "mistral", "deepseek", "fireworks"];
+
 // ─── State ──────────────────────────────────────────────────────────────────
 
-const abState = {
-  // Model configs
-  providerA: "openai",
-  modelA: "",
-  tempA: 0.7,
-  maxTokensA: null,
-  providerB: "anthropic",
-  modelB: "",
-  tempB: 0.7,
-  maxTokensB: null,
+const state = {
+  /**
+   * slots: Array of model configurations.
+   * Each slot: { id, provider, model, temp, maxTokens, response }
+   * response: { text, usage, error, ttft, totalTime, startedAt, abortController }
+   */
+  slots: [],
 
-  // Shared
+  // Shared settings
   systemMessage: "",
   corsProxy: "",
 
@@ -29,71 +44,39 @@ const abState = {
   blindRevealed: false,
 
   // Current test
-  messages: [],  // shared conversation (user messages)
-  responseA: null, // { text, usage, error, ttft, totalTime, startedAt }
-  responseB: null,
+  messages: [],
   isGenerating: false,
-  abortControllerA: null,
-  abortControllerB: null,
 
-  // Verdict for current round
-  verdict: null, // "a" | "b" | "tie" | "both_bad" | null
+  // Verdict: index of winning slot, or "tie" / "all_bad" / null
+  verdict: null,
 
   // History
-  history: [], // [{ id, prompt, modelA, modelB, providerA, providerB, responseA, responseB, verdict, metrics, timestamp }]
+  history: [],
 };
 
-// ─── DOM ────────────────────────────────────────────────────────────────────
+// ─── DOM refs (static elements only; dynamic ones are queried as needed) ────
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
 const dom = {
-  // Config
-  providerA: $("#provider-a"),
-  modelA: $("#model-a"),
-  tempA: $("#temp-a"),
-  maxTokensA: $("#max-tokens-a"),
-  keyA: $("#key-a"),
-  providerB: $("#provider-b"),
-  modelB: $("#model-b"),
-  tempB: $("#temp-b"),
-  maxTokensB: $("#max-tokens-b"),
-  keyB: $("#key-b"),
-  modelADisplay: $("#model-a-display"),
-  modelBDisplay: $("#model-b-display"),
+  configPanel: $("#config-panel"),
+  arena: $("#arena"),
+  verdictBar: $("#verdict-bar"),
+  verdictButtons: $("#verdict-buttons"),
+  metricsBar: $("#metrics-bar"),
+  metricsTable: $("#metrics-table"),
 
-  // Shared
   systemMsg: $("#system-msg"),
   systemMsgToggle: $("#system-msg-toggle"),
   systemMsgPanel: $("#system-msg-panel"),
 
-  // Arena
-  arena: $("#arena"),
-  paneA: $("#pane-a"),
-  paneB: $("#pane-b"),
-  messagesA: $("#messages-a"),
-  messagesB: $("#messages-b"),
-  paneLabelA: $("#pane-label-a"),
-  paneLabelB: $("#pane-label-b"),
-  statusA: $("#status-a"),
-  statusB: $("#status-b"),
-  arenaDivider: $("#arena-divider"),
-
-  // Verdict
-  verdictBar: $("#verdict-bar"),
-  metricsBar: $("#metrics-bar"),
-
-  // Input
   userInput: $("#user-input"),
   sendBtn: $("#send-btn"),
   stopBtn: $("#stop-btn"),
   clearBtn: $("#clear-btn"),
+  slotCountLabel: $("#slot-count-label"),
 
-  // Mode
-  modeTabs: $$(".mode-tab"),
-
-  // History
   historyBtn: $("#history-btn"),
   historyCount: $("#history-count"),
   historyOverlay: $("#history-overlay"),
@@ -103,29 +86,32 @@ const dom = {
   exportHistoryBtn: $("#export-history-btn"),
   clearHistoryBtn: $("#clear-history-btn"),
 
-  // Theme
   themeToggle: $("#theme-toggle"),
-
-  // Swap
-  swapBtn: $("#swap-btn"),
 };
 
 // ─── Init ───────────────────────────────────────────────────────────────────
 
 function init() {
   loadState();
-  populateProviderSelects();
-  applyConfig();
-  setupEventListeners();
+
+  // Ensure at least 2 slots
+  if (state.slots.length < MIN_SLOTS) {
+    state.slots = [
+      makeSlot("openai", ""),
+      makeSlot("anthropic", ""),
+    ];
+  }
+
+  renderConfigPanel();
+  renderArena();
+  setupStaticListeners();
   updateTheme();
   updateHistoryBadge();
-  setupDividerDrag();
+  updateSlotCountLabel();
 
-  // Configure marked
   if (typeof marked !== "undefined") {
     marked.setOptions({
-      breaks: true,
-      gfm: true,
+      breaks: true, gfm: true,
       highlight: (code, lang) => {
         if (typeof hljs !== "undefined" && lang && hljs.getLanguage(lang)) {
           try { return hljs.highlight(code, { language: lang }).value; } catch {}
@@ -136,79 +122,49 @@ function init() {
   }
 }
 
-// ─── Event Listeners ────────────────────────────────────────────────────────
+function makeSlot(provider, model) {
+  return {
+    id: genId(),
+    provider: provider || "openai",
+    model: model || "",
+    temp: 0.7,
+    maxTokens: null,
+    response: null,
+  };
+}
 
-function setupEventListeners() {
-  // Provider selects
-  dom.providerA.addEventListener("change", () => {
-    abState.providerA = dom.providerA.value;
-    abState.modelA = "";
-    populateModelSelect("a");
-    loadKeyForSide("a");
-    saveState();
-  });
-  dom.providerB.addEventListener("change", () => {
-    abState.providerB = dom.providerB.value;
-    abState.modelB = "";
-    populateModelSelect("b");
-    loadKeyForSide("b");
-    saveState();
-  });
+function genId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
 
-  // Model selects
-  dom.modelA.addEventListener("change", () => {
-    abState.modelA = dom.modelA.value;
-    updateModelDisplays();
-    saveState();
-  });
-  dom.modelB.addEventListener("change", () => {
-    abState.modelB = dom.modelB.value;
-    updateModelDisplays();
-    saveState();
-  });
+// ─── Static Event Listeners ─────────────────────────────────────────────────
 
-  // Parameters
-  dom.tempA.addEventListener("change", () => { abState.tempA = parseFloat(dom.tempA.value) || 0.7; saveState(); });
-  dom.tempB.addEventListener("change", () => { abState.tempB = parseFloat(dom.tempB.value) || 0.7; saveState(); });
-  dom.maxTokensA.addEventListener("change", () => { abState.maxTokensA = dom.maxTokensA.value ? parseInt(dom.maxTokensA.value) : null; saveState(); });
-  dom.maxTokensB.addEventListener("change", () => { abState.maxTokensB = dom.maxTokensB.value ? parseInt(dom.maxTokensB.value) : null; saveState(); });
-
-  // API keys — save directly to the shared localStorage key store
-  dom.keyA.addEventListener("change", () => {
-    setApiKey(abState.providerA, dom.keyA.value);
-  });
-  dom.keyB.addEventListener("change", () => {
-    setApiKey(abState.providerB, dom.keyB.value);
-  });
-
-  // System message toggle
+function setupStaticListeners() {
+  // System message
   dom.systemMsgToggle.addEventListener("click", () => {
     const open = dom.systemMsgPanel.style.display !== "none";
     dom.systemMsgPanel.style.display = open ? "none" : "block";
     dom.systemMsgToggle.classList.toggle("open", !open);
   });
   dom.systemMsg.addEventListener("input", () => {
-    abState.systemMessage = dom.systemMsg.value;
+    state.systemMessage = dom.systemMsg.value;
     saveState();
   });
 
   // Mode tabs
-  dom.modeTabs.forEach(tab => {
+  $$(".mode-tab").forEach(tab => {
     tab.addEventListener("click", () => {
-      abState.mode = tab.dataset.mode;
-      dom.modeTabs.forEach(t => t.classList.toggle("active", t === tab));
+      state.mode = tab.dataset.mode;
+      $$(".mode-tab").forEach(t => t.classList.toggle("active", t === tab));
       applyMode();
       saveState();
     });
   });
 
-  // Send message
+  // Send
   dom.sendBtn.addEventListener("click", sendPrompt);
   dom.userInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      sendPrompt();
-    }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendPrompt(); }
   });
   dom.userInput.addEventListener("input", autoResize);
 
@@ -217,14 +173,6 @@ function setupEventListeners() {
 
   // Clear
   dom.clearBtn.addEventListener("click", clearArena);
-
-  // Swap
-  dom.swapBtn.addEventListener("click", swapSides);
-
-  // Verdict buttons
-  $$(".verdict-btn").forEach(btn => {
-    btn.addEventListener("click", () => recordVerdict(btn.dataset.verdict));
-  });
 
   // History
   dom.historyBtn.addEventListener("click", openHistory);
@@ -238,272 +186,327 @@ function setupEventListeners() {
   // Theme
   dom.themeToggle.addEventListener("click", toggleTheme);
 
-  // Keyboard shortcuts
+  // Keyboard
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") {
-      if (dom.historyOverlay.style.display !== "none") {
-        closeHistory();
-        return;
-      }
+    if (e.key === "Escape" && dom.historyOverlay.style.display !== "none") {
+      closeHistory(); return;
     }
     const isInput = e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT";
-    if (isInput) return;
-    if (e.key === "/" && !abState.isGenerating) {
-      e.preventDefault();
-      dom.userInput.focus();
+    if (!isInput && e.key === "/" && !state.isGenerating) {
+      e.preventDefault(); dom.userInput.focus();
     }
   });
 }
 
-// ─── Provider & Model Selects ───────────────────────────────────────────────
+// ─── Config Panel Rendering ─────────────────────────────────────────────────
 
-function populateProviderSelects() {
+function renderConfigPanel() {
+  dom.configPanel.innerHTML = "";
+
+  state.slots.forEach((slot, idx) => {
+    const letter = SLOT_LETTERS[idx] || `${idx + 1}`;
+    const c = SLOT_COLORS[idx % SLOT_COLORS.length];
+    const displayName = getModelDisplayName(slot.provider, slot.model);
+
+    const card = document.createElement("div");
+    card.className = "slot-card";
+    card.dataset.slotId = slot.id;
+    card.innerHTML = `
+      <div class="slot-header">
+        <span class="slot-label" style="background:${c.bg};color:${c.color}">Model ${letter}</span>
+        <span class="slot-model-name">${esc(displayName)}</span>
+        ${state.slots.length > MIN_SLOTS ? `<button class="slot-remove" data-slot-id="${slot.id}" title="Remove model"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>` : ""}
+      </div>
+      <div class="slot-selects">
+        <select class="provider-select" data-slot-id="${slot.id}" title="Provider"></select>
+        <span class="slot-sep">/</span>
+        <select class="model-select" data-slot-id="${slot.id}" title="Model"></select>
+      </div>
+      <div class="slot-params">
+        <label class="slot-param">
+          <span>Temp</span>
+          <input type="number" class="temp-input" data-slot-id="${slot.id}" min="0" max="2" step="0.1" value="${slot.temp}">
+        </label>
+        <label class="slot-param">
+          <span>Max Tok</span>
+          <input type="number" class="max-tokens-input" data-slot-id="${slot.id}" placeholder="auto" min="1" max="200000" value="${slot.maxTokens || ""}">
+        </label>
+        <label class="slot-param">
+          <span>API Key</span>
+          <input type="password" class="key-input" data-slot-id="${slot.id}" placeholder="sk-..." autocomplete="off" value="${getApiKey(slot.provider)}">
+        </label>
+      </div>`;
+
+    dom.configPanel.appendChild(card);
+
+    // Populate selects
+    const provSelect = card.querySelector(".provider-select");
+    const modelSelect = card.querySelector(".model-select");
+    populateProviderSelect(provSelect, slot.provider);
+    populateModelSelectForSlot(modelSelect, slot);
+
+    // Event listeners
+    provSelect.addEventListener("change", () => {
+      slot.provider = provSelect.value;
+      slot.model = "";
+      populateModelSelectForSlot(modelSelect, slot);
+      card.querySelector(".key-input").value = getApiKey(slot.provider);
+      card.querySelector(".slot-model-name").textContent = getModelDisplayName(slot.provider, slot.model);
+      updatePaneLabel(slot);
+      saveState();
+    });
+
+    modelSelect.addEventListener("change", () => {
+      slot.model = modelSelect.value;
+      card.querySelector(".slot-model-name").textContent = getModelDisplayName(slot.provider, slot.model);
+      updatePaneLabel(slot);
+      saveState();
+    });
+
+    card.querySelector(".temp-input").addEventListener("change", (e) => {
+      slot.temp = parseFloat(e.target.value) || 0.7;
+      saveState();
+    });
+
+    card.querySelector(".max-tokens-input").addEventListener("change", (e) => {
+      slot.maxTokens = e.target.value ? parseInt(e.target.value) : null;
+      saveState();
+    });
+
+    card.querySelector(".key-input").addEventListener("change", (e) => {
+      setApiKey(slot.provider, e.target.value);
+    });
+
+    // Remove button
+    const removeBtn = card.querySelector(".slot-remove");
+    if (removeBtn) {
+      removeBtn.addEventListener("click", () => removeSlot(slot.id));
+    }
+  });
+
+  // Add Model button
+  if (state.slots.length < MAX_SLOTS) {
+    const addBtn = document.createElement("button");
+    addBtn.className = "add-slot-card";
+    addBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Add Model`;
+    addBtn.addEventListener("click", addSlot);
+    dom.configPanel.appendChild(addBtn);
+  }
+
+  applyMode();
+}
+
+function populateProviderSelect(select, currentProvider) {
   const builtIn = ["openai", "anthropic", "google", "groq", "together", "mistral", "deepseek", "fireworks", "perplexity", "cohere", "xai", "ollama"];
   let html = "";
   for (const id of builtIn) {
     const p = PROVIDERS[id];
-    if (p) html += `<option value="${id}">${p.name}</option>`;
+    if (p) html += `<option value="${id}" ${id === currentProvider ? "selected" : ""}>${p.name}</option>`;
   }
-
-  dom.providerA.innerHTML = html;
-  dom.providerB.innerHTML = html;
-  dom.providerA.value = abState.providerA;
-  dom.providerB.value = abState.providerB;
-
-  populateModelSelect("a");
-  populateModelSelect("b");
+  select.innerHTML = html;
 }
 
-function populateModelSelect(side) {
-  const provider = side === "a" ? abState.providerA : abState.providerB;
-  const select = side === "a" ? dom.modelA : dom.modelB;
-  const models = getModelsForProvider(provider, "chat", "");
-
+function populateModelSelectForSlot(select, slot) {
+  const models = getModelsForProvider(slot.provider, "chat", "");
   let html = "";
   for (const m of models) {
     html += `<option value="${esc(m.id)}">${esc(m.name)}</option>`;
   }
-  // Allow custom model ID
   html += `<option value="">Custom...</option>`;
   select.innerHTML = html;
 
-  // Set current value
-  const current = side === "a" ? abState.modelA : abState.modelB;
-  if (current && [...select.options].some(o => o.value === current)) {
-    select.value = current;
+  if (slot.model && [...select.options].some(o => o.value === slot.model)) {
+    select.value = slot.model;
   } else if (models.length > 0) {
     const def = models.find(m => m.isDefault) || models[0];
     select.value = def.id;
-    if (side === "a") abState.modelA = def.id;
-    else abState.modelB = def.id;
-  }
-
-  updateModelDisplays();
-}
-
-function updateModelDisplays() {
-  const nameA = getModelDisplayName(abState.providerA, abState.modelA);
-  const nameB = getModelDisplayName(abState.providerB, abState.modelB);
-  dom.modelADisplay.textContent = nameA;
-  dom.modelBDisplay.textContent = nameB;
-
-  // Update pane labels in non-blind mode
-  if (abState.mode !== "blind" || abState.blindRevealed) {
-    dom.paneLabelA.textContent = nameA || "Model A";
-    dom.paneLabelB.textContent = nameB || "Model B";
+    slot.model = def.id;
   }
 }
 
-function getModelDisplayName(provider, modelId) {
-  if (!modelId) return "";
-  const cat = MODEL_CATALOG.find(m => m.provider === provider && m.id === modelId);
-  return cat ? cat.name : modelId;
+function addSlot() {
+  if (state.slots.length >= MAX_SLOTS) return;
+
+  // Pick a provider not yet used, falling back to the list
+  const usedProviders = new Set(state.slots.map(s => s.provider));
+  const nextProvider = DEFAULT_PROVIDERS.find(p => !usedProviders.has(p)) || "openai";
+
+  state.slots.push(makeSlot(nextProvider, ""));
+  renderConfigPanel();
+  renderArena();
+  updateSlotCountLabel();
+  saveState();
+
+  // Scroll config panel to the right to show the new card
+  dom.configPanel.scrollLeft = dom.configPanel.scrollWidth;
 }
 
-function applyConfig() {
-  dom.providerA.value = abState.providerA;
-  dom.providerB.value = abState.providerB;
-  dom.tempA.value = abState.tempA;
-  dom.tempB.value = abState.tempB;
-  dom.maxTokensA.value = abState.maxTokensA || "";
-  dom.maxTokensB.value = abState.maxTokensB || "";
-  dom.systemMsg.value = abState.systemMessage;
-
-  loadKeyForSide("a");
-  loadKeyForSide("b");
-  updateModelDisplays();
-  applyMode();
-}
-
-function loadKeyForSide(side) {
-  const provider = side === "a" ? abState.providerA : abState.providerB;
-  const input = side === "a" ? dom.keyA : dom.keyB;
-  input.value = getApiKey(provider);
-}
-
-function applyMode() {
-  const body = document.body;
-  body.classList.remove("blind-mode", "revealed");
-  abState.blindRevealed = false;
-
-  if (abState.mode === "blind") {
-    body.classList.add("blind-mode");
-    dom.paneLabelA.textContent = "Model A";
-    dom.paneLabelB.textContent = "Model B";
-  } else {
-    updateModelDisplays();
-  }
-}
-
-// ─── Swap ───────────────────────────────────────────────────────────────────
-
-function swapSides() {
-  // Swap all config
-  [abState.providerA, abState.providerB] = [abState.providerB, abState.providerA];
-  [abState.modelA, abState.modelB] = [abState.modelB, abState.modelA];
-  [abState.tempA, abState.tempB] = [abState.tempB, abState.tempA];
-  [abState.maxTokensA, abState.maxTokensB] = [abState.maxTokensB, abState.maxTokensA];
-
-  dom.providerA.value = abState.providerA;
-  dom.providerB.value = abState.providerB;
-  populateModelSelect("a");
-  populateModelSelect("b");
-  dom.tempA.value = abState.tempA;
-  dom.tempB.value = abState.tempB;
-  dom.maxTokensA.value = abState.maxTokensA || "";
-  dom.maxTokensB.value = abState.maxTokensB || "";
-  loadKeyForSide("a");
-  loadKeyForSide("b");
-  updateModelDisplays();
+function removeSlot(slotId) {
+  if (state.slots.length <= MIN_SLOTS) return;
+  state.slots = state.slots.filter(s => s.id !== slotId);
+  renderConfigPanel();
+  renderArena();
+  updateSlotCountLabel();
   saveState();
 }
 
-// ─── Send Prompt ────────────────────────────────────────────────────────────
+function updateSlotCountLabel() {
+  dom.slotCountLabel.textContent = `Same prompt sent to ${state.slots.length} model${state.slots.length > 1 ? "s" : ""} simultaneously`;
+}
+
+// ─── Arena Rendering ────────────────────────────────────────────────────────
+
+function renderArena() {
+  dom.arena.innerHTML = "";
+
+  state.slots.forEach((slot, idx) => {
+    const letter = SLOT_LETTERS[idx] || `${idx + 1}`;
+    const c = SLOT_COLORS[idx % SLOT_COLORS.length];
+    const displayName = (state.mode === "blind" && !state.blindRevealed)
+      ? `Model ${letter}`
+      : (getModelDisplayName(slot.provider, slot.model) || `Model ${letter}`);
+
+    const pane = document.createElement("div");
+    pane.className = "arena-pane";
+    pane.dataset.slotId = slot.id;
+    pane.innerHTML = `
+      <div class="pane-header">
+        <span class="pane-label" data-slot-id="${slot.id}" style="background:${c.bg};color:${c.color}">${esc(displayName)}</span>
+        <span class="pane-status" data-slot-id="${slot.id}"></span>
+      </div>
+      <div class="pane-messages" data-slot-id="${slot.id}">
+        <div class="arena-welcome"><p>Model ${letter}</p></div>
+      </div>`;
+    dom.arena.appendChild(pane);
+  });
+}
+
+function updatePaneLabel(slot) {
+  const label = dom.arena.querySelector(`.pane-label[data-slot-id="${slot.id}"]`);
+  if (!label) return;
+  const idx = state.slots.findIndex(s => s.id === slot.id);
+  const letter = SLOT_LETTERS[idx] || `${idx + 1}`;
+
+  if (state.mode === "blind" && !state.blindRevealed) {
+    label.textContent = `Model ${letter}`;
+  } else {
+    label.textContent = getModelDisplayName(slot.provider, slot.model) || `Model ${letter}`;
+  }
+}
+
+// ─── Send Prompt (N-way parallel dispatch) ──────────────────────────────────
 
 async function sendPrompt() {
   const text = dom.userInput.value.trim();
-  if (!text || abState.isGenerating) return;
+  if (!text || state.isGenerating) return;
 
-  abState.isGenerating = true;
-  abState.verdict = null;
-  abState.blindRevealed = false;
-  abState.responseA = { text: "", usage: null, error: null, ttft: null, totalTime: null, startedAt: performance.now() };
-  abState.responseB = { text: "", usage: null, error: null, ttft: null, totalTime: null, startedAt: performance.now() };
-  abState.abortControllerA = new AbortController();
-  abState.abortControllerB = new AbortController();
+  state.isGenerating = true;
+  state.verdict = null;
+  state.blindRevealed = false;
 
-  // Add user message to display
-  abState.messages.push({ role: "user", content: text });
+  // Initialize response objects for each slot
+  const now = performance.now();
+  for (const slot of state.slots) {
+    slot.response = {
+      text: "", usage: null, error: null,
+      ttft: null, totalTime: null, startedAt: now,
+      abortController: new AbortController(),
+    };
+  }
+
+  state.messages.push({ role: "user", content: text });
 
   // Clear input
   dom.userInput.value = "";
   autoResize();
 
-  // Hide verdict/metrics from previous round
+  // Hide previous verdict/metrics
   dom.verdictBar.style.display = "none";
   dom.metricsBar.style.display = "none";
 
-  // Render user message in both panes
-  appendUserMessage(dom.messagesA, text);
-  appendUserMessage(dom.messagesB, text);
-
-  // Show streaming UI
-  const streamA = appendStreamingPlaceholder(dom.messagesA);
-  const streamB = appendStreamingPlaceholder(dom.messagesB);
+  // Render user message and streaming placeholder in each pane
+  const streamEls = {};
+  for (const slot of state.slots) {
+    const paneMessages = dom.arena.querySelector(`.pane-messages[data-slot-id="${slot.id}"]`);
+    if (!paneMessages) continue;
+    appendUserMessage(paneMessages, text);
+    streamEls[slot.id] = appendStreamingPlaceholder(paneMessages);
+  }
 
   updateUI(true);
 
-  // Dispatch both in parallel
-  const modelA = abState.modelA || PROVIDERS[abState.providerA]?.defaultModel || "";
-  const modelB = abState.modelB || PROVIDERS[abState.providerB]?.defaultModel || "";
+  // Dispatch to all slots in parallel
+  const promises = state.slots.map(slot =>
+    dispatchToSlot(slot, text, streamEls[slot.id])
+  );
 
-  const promiseA = dispatchToModel("a", text, modelA, streamA);
-  const promiseB = dispatchToModel("b", text, modelB, streamB);
+  await Promise.allSettled(promises);
 
-  await Promise.allSettled([promiseA, promiseB]);
-
-  abState.isGenerating = false;
+  state.isGenerating = false;
   updateUI(false);
 
-  // Show verdict bar
+  // Show verdict and metrics
+  renderVerdictButtons();
   dom.verdictBar.style.display = "flex";
-
-  // Show metrics
   showMetrics();
 
-  // In blind mode, the reveal happens after verdict
   saveState();
 }
 
-async function dispatchToModel(side, text, model, streamEl) {
-  const provider = side === "a" ? abState.providerA : abState.providerB;
-  const temp = side === "a" ? abState.tempA : abState.tempB;
-  const maxTokens = side === "a" ? abState.maxTokensA : abState.maxTokensB;
-  const signal = side === "a" ? abState.abortControllerA.signal : abState.abortControllerB.signal;
-  const response = side === "a" ? abState.responseA : abState.responseB;
-  const statusEl = side === "a" ? dom.statusA : dom.statusB;
-  const messagesEl = side === "a" ? dom.messagesA : dom.messagesB;
+async function dispatchToSlot(slot, text, streamEl) {
+  const statusEl = dom.arena.querySelector(`.pane-status[data-slot-id="${slot.id}"]`);
+  const paneMessages = dom.arena.querySelector(`.pane-messages[data-slot-id="${slot.id}"]`);
+  const response = slot.response;
+  const signal = response.abortController.signal;
+  const model = slot.model || PROVIDERS[slot.provider]?.defaultModel || "";
 
-  statusEl.textContent = "connecting...";
-  statusEl.className = "pane-status streaming";
+  if (statusEl) { statusEl.textContent = "connecting..."; statusEl.className = "pane-status streaming"; }
 
   try {
-    // Build messages array (only the latest user message for simple A/B test)
-    const apiMessages = abState.messages
+    const apiMessages = state.messages
       .filter(m => m.role === "user")
       .map(m => ({ role: "user", content: m.content }));
 
     const { url, headers, body } = buildRequest({
-      provider,
+      provider: slot.provider,
       model,
       messages: apiMessages,
-      systemMessage: abState.systemMessage,
-      temperature: temp,
-      maxTokens: maxTokens,
+      systemMessage: state.systemMessage,
+      temperature: slot.temp,
+      maxTokens: slot.maxTokens,
       topP: 1,
       stream: true,
-      corsProxy: abState.corsProxy,
+      corsProxy: state.corsProxy,
     });
 
-    const fetchResponse = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal,
+    const fetchResp = await fetch(url, {
+      method: "POST", headers, body: JSON.stringify(body), signal,
     });
 
-    if (!fetchResponse.ok) {
-      const errorBody = await fetchResponse.text();
-      let errorMsg;
+    if (!fetchResp.ok) {
+      const errBody = await fetchResp.text();
+      let errMsg;
       try {
-        const parsed = JSON.parse(errorBody);
-        errorMsg = parsed.error?.message || parsed.message || parsed.error || errorBody;
-        if (typeof errorMsg === "object") errorMsg = JSON.stringify(errorMsg);
-      } catch {
-        errorMsg = errorBody;
-      }
-      throw new Error(`${fetchResponse.status}: ${errorMsg}`);
+        const p = JSON.parse(errBody);
+        errMsg = p.error?.message || p.message || p.error || errBody;
+        if (typeof errMsg === "object") errMsg = JSON.stringify(errMsg);
+      } catch { errMsg = errBody; }
+      throw new Error(`${fetchResp.status}: ${errMsg}`);
     }
 
-    // Stream the response
-    const reader = fetchResponse.body.getReader();
-    const parser = getStreamParser(provider);
-
+    const reader = fetchResp.body.getReader();
+    const parser = getStreamParser(slot.provider);
     let fullText = "";
     let rawUsage = null;
     let firstToken = true;
 
-    statusEl.textContent = "streaming...";
+    if (statusEl) statusEl.textContent = "streaming...";
 
     for await (const event of parser(reader)) {
       if (signal.aborted) break;
-
       switch (event.type) {
         case "delta":
-          if (firstToken) {
-            response.ttft = performance.now() - response.startedAt;
-            firstToken = false;
-          }
+          if (firstToken) { response.ttft = performance.now() - response.startedAt; firstToken = false; }
           fullText += event.text;
           updateStreamingContent(streamEl, fullText);
           break;
@@ -517,23 +520,18 @@ async function dispatchToModel(side, text, model, streamEl) {
 
     response.totalTime = performance.now() - response.startedAt;
     response.text = fullText;
-    response.usage = normalizeUsage(provider, rawUsage);
-
-    // Finalize the streaming element
+    response.usage = normalizeUsage(slot.provider, rawUsage);
     finalizeStreamingContent(streamEl, fullText);
 
-    statusEl.textContent = formatMs(response.totalTime);
-    statusEl.className = "pane-status";
-
+    if (statusEl) { statusEl.textContent = formatMs(response.totalTime); statusEl.className = "pane-status"; }
   } catch (err) {
     if (err.name === "AbortError") {
       response.error = "Cancelled";
-      statusEl.textContent = "cancelled";
+      if (statusEl) statusEl.textContent = "cancelled";
     } else {
       response.error = err.message;
-      statusEl.textContent = "error";
-      statusEl.className = "pane-status error";
-      appendError(messagesEl, streamEl, err.message);
+      if (statusEl) { statusEl.textContent = "error"; statusEl.className = "pane-status error"; }
+      appendError(paneMessages, streamEl, err.message);
     }
     response.totalTime = performance.now() - response.startedAt;
   }
@@ -542,10 +540,8 @@ async function dispatchToModel(side, text, model, streamEl) {
 // ─── Message Rendering ──────────────────────────────────────────────────────
 
 function appendUserMessage(container, text) {
-  // Remove welcome if present
   const welcome = container.querySelector(".arena-welcome");
   if (welcome) welcome.remove();
-
   const div = document.createElement("div");
   div.className = "msg user";
   div.textContent = text;
@@ -563,40 +559,32 @@ function appendStreamingPlaceholder(container) {
 }
 
 function updateStreamingContent(el, text) {
-  const content = el.querySelector(".streaming-content");
+  const content = el?.querySelector(".streaming-content");
   if (!content) return;
   content.innerHTML = renderMarkdown(text);
   content.classList.add("streaming-cursor");
-  el.closest(".pane-messages").scrollTop = el.closest(".pane-messages").scrollHeight;
+  const pane = el.closest(".pane-messages");
+  if (pane) pane.scrollTop = pane.scrollHeight;
 }
 
 function finalizeStreamingContent(el, text) {
-  const content = el.querySelector(".streaming-content");
+  const content = el?.querySelector(".streaming-content");
   if (!content) return;
   content.innerHTML = renderMarkdown(text);
   content.classList.remove("streaming-cursor");
-
-  // Highlight code blocks
   content.querySelectorAll("pre code").forEach(block => {
     if (typeof hljs !== "undefined") hljs.highlightElement(block);
   });
-
   addCopyButtons(content);
 }
 
 function appendError(container, streamEl, message) {
-  // Replace streaming placeholder with error
-  if (streamEl) {
-    streamEl.className = "msg error";
-    streamEl.innerHTML = esc(message);
-  }
+  if (streamEl) { streamEl.className = "msg error"; streamEl.innerHTML = esc(message); }
 }
 
 function renderMarkdown(text) {
   if (!text) return "";
-  if (typeof marked !== "undefined") {
-    try { return marked.parse(text); } catch {}
-  }
+  if (typeof marked !== "undefined") { try { return marked.parse(text); } catch {} }
   return esc(text).replace(/\n/g, "<br>");
 }
 
@@ -611,15 +599,12 @@ function addCopyButtons(container) {
     if (pre.querySelector(".code-header")) return;
     const code = pre.querySelector("code");
     if (!code) return;
-
     const langClass = [...code.classList].find(c => c.startsWith("language-"));
     const lang = langClass ? langClass.replace("language-", "") : "";
-
     const header = document.createElement("div");
     header.className = "code-header";
     header.innerHTML = `<span>${lang}</span><button class="copy-btn" title="Copy"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy</button>`;
     pre.insertBefore(header, code);
-
     header.querySelector(".copy-btn").addEventListener("click", function() {
       navigator.clipboard.writeText(code.textContent).then(() => {
         this.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> Copied!`;
@@ -633,99 +618,150 @@ function addCopyButtons(container) {
 
 // ─── Verdict ────────────────────────────────────────────────────────────────
 
-function recordVerdict(verdict) {
-  abState.verdict = verdict;
+function renderVerdictButtons() {
+  let html = "";
 
-  // Highlight selected button
-  $$(".verdict-btn").forEach(btn => {
-    btn.classList.toggle("selected", btn.dataset.verdict === verdict);
+  // One button per slot: "A wins", "B wins", "C wins"...
+  state.slots.forEach((slot, idx) => {
+    const letter = SLOT_LETTERS[idx] || `${idx + 1}`;
+    const c = SLOT_COLORS[idx % SLOT_COLORS.length];
+    html += `<button class="verdict-btn" data-verdict="${idx}" style="--v-color:${c.color};--v-bg:${c.bg}">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+      ${letter} wins</button>`;
   });
 
-  // In blind mode, reveal the models
-  if (abState.mode === "blind" && !abState.blindRevealed) {
-    abState.blindRevealed = true;
+  // Tie and All Bad
+  html += `<button class="verdict-btn verdict-tie" data-verdict="tie">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    Tie</button>`;
+  html += `<button class="verdict-btn verdict-bad" data-verdict="all_bad">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 15V9a3 3 0 0 1 3-3l4 9v-11H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3z"/><path d="M17 2h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/></svg>
+    All Bad</button>`;
+
+  dom.verdictButtons.innerHTML = html;
+
+  // Attach listeners
+  dom.verdictButtons.querySelectorAll(".verdict-btn").forEach(btn => {
+    btn.addEventListener("click", () => recordVerdict(btn.dataset.verdict));
+  });
+}
+
+function recordVerdict(verdict) {
+  state.verdict = verdict;
+
+  // Highlight selected
+  dom.verdictButtons.querySelectorAll(".verdict-btn").forEach(btn => {
+    const isSelected = btn.dataset.verdict === verdict;
+    btn.classList.toggle("selected", isSelected);
+    // For slot-specific buttons, apply slot color on select
+    if (isSelected && verdict !== "tie" && verdict !== "all_bad") {
+      const idx = parseInt(verdict);
+      const c = SLOT_COLORS[idx % SLOT_COLORS.length];
+      btn.style.borderColor = `${c.color}`;
+      btn.style.background = `${c.bg}`;
+      btn.style.color = `${c.color}`;
+    } else if (!isSelected && verdict !== "tie" && verdict !== "all_bad") {
+      // Reset non-selected slot buttons
+    }
+  });
+
+  // In blind mode, reveal
+  if (state.mode === "blind" && !state.blindRevealed) {
+    state.blindRevealed = true;
     document.body.classList.add("revealed");
-    updateModelDisplays();
-    dom.paneLabelA.textContent = getModelDisplayName(abState.providerA, abState.modelA) || "Model A";
-    dom.paneLabelB.textContent = getModelDisplayName(abState.providerB, abState.modelB) || "Model B";
+    state.slots.forEach(slot => updatePaneLabel(slot));
+    renderConfigPanel();
   }
 
   // Save to history
-  const lastPrompt = abState.messages.filter(m => m.role === "user").pop()?.content || "";
+  const lastPrompt = state.messages.filter(m => m.role === "user").pop()?.content || "";
   const entry = {
-    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    id: genId(),
     prompt: lastPrompt,
-    providerA: abState.providerA,
-    modelA: abState.modelA,
-    providerB: abState.providerB,
-    modelB: abState.modelB,
-    responseA: { text: abState.responseA?.text || "", error: abState.responseA?.error || null },
-    responseB: { text: abState.responseB?.text || "", error: abState.responseB?.error || null },
+    slots: state.slots.map((slot, idx) => ({
+      provider: slot.provider,
+      model: slot.model,
+      label: SLOT_LETTERS[idx] || `${idx + 1}`,
+      responseText: slot.response?.text || "",
+      responseError: slot.response?.error || null,
+      ttft: slot.response?.ttft,
+      totalTime: slot.response?.totalTime,
+      outputTokens: slot.response?.usage?.output_tokens || 0,
+    })),
     verdict,
-    metrics: {
-      ttftA: abState.responseA?.ttft,
-      ttftB: abState.responseB?.ttft,
-      timeA: abState.responseA?.totalTime,
-      timeB: abState.responseB?.totalTime,
-      tokensA: abState.responseA?.usage?.output_tokens || 0,
-      tokensB: abState.responseB?.usage?.output_tokens || 0,
-    },
     timestamp: Date.now(),
   };
 
-  abState.history.push(entry);
+  state.history.push(entry);
   saveState();
   updateHistoryBadge();
 }
 
-// ─── Metrics Display ────────────────────────────────────────────────────────
+// ─── Metrics ────────────────────────────────────────────────────────────────
 
 function showMetrics() {
-  const a = abState.responseA;
-  const b = abState.responseB;
-  if (!a && !b) return;
+  dom.metricsBar.style.display = "block";
 
-  dom.metricsBar.style.display = "flex";
+  const slots = state.slots;
+  const n = slots.length;
 
-  setMetric("ttft", a?.ttft, b?.ttft, "lower");
-  setMetric("time", a?.totalTime, b?.totalTime, "lower");
+  // Column headers: one per slot
+  let headerRow = `<tr><th></th>`;
+  slots.forEach((slot, idx) => {
+    const c = SLOT_COLORS[idx % SLOT_COLORS.length];
+    const letter = SLOT_LETTERS[idx] || `${idx + 1}`;
+    headerRow += `<th style="color:${c.color}">${letter}</th>`;
+  });
+  headerRow += `</tr>`;
 
-  const tokA = a?.usage?.output_tokens || 0;
-  const tokB = b?.usage?.output_tokens || 0;
-  setMetric("tokens", tokA, tokB, null);
+  // Metrics rows
+  const metrics = [
+    { label: "TTFT", key: "ttft", format: formatMs, winRule: "lower" },
+    { label: "Total Time", key: "totalTime", format: formatMs, winRule: "lower" },
+    { label: "Output Tokens", key: "tokens", format: fmtNum, winRule: null },
+    { label: "Tokens/sec", key: "tps", format: v => v ? v.toFixed(1) : "—", winRule: "higher" },
+  ];
 
-  const tpsA = (a?.totalTime && tokA) ? (tokA / (a.totalTime / 1000)) : 0;
-  const tpsB = (b?.totalTime && tokB) ? (tokB / (b.totalTime / 1000)) : 0;
-  setMetric("tps", tpsA, tpsB, "higher");
-}
+  let bodyRows = "";
+  for (const m of metrics) {
+    const values = slots.map(slot => {
+      const r = slot.response;
+      if (!r) return null;
+      if (m.key === "ttft") return r.ttft;
+      if (m.key === "totalTime") return r.totalTime;
+      if (m.key === "tokens") return r.usage?.output_tokens || 0;
+      if (m.key === "tps") {
+        const tok = r.usage?.output_tokens || 0;
+        return (r.totalTime && tok) ? (tok / (r.totalTime / 1000)) : 0;
+      }
+      return null;
+    });
 
-function setMetric(name, valA, valB, winRule) {
-  const elA = $(`#metric-${name}-a`);
-  const elB = $(`#metric-${name}-b`);
-
-  if (name === "tokens") {
-    elA.textContent = valA ? fmtNum(valA) : "—";
-    elB.textContent = valB ? fmtNum(valB) : "—";
-  } else if (name === "tps") {
-    elA.textContent = valA ? valA.toFixed(1) : "—";
-    elB.textContent = valB ? valB.toFixed(1) : "—";
-  } else {
-    elA.textContent = valA != null ? formatMs(valA) : "—";
-    elB.textContent = valB != null ? formatMs(valB) : "—";
-  }
-
-  // Highlight winner
-  elA.classList.remove("winner");
-  elB.classList.remove("winner");
-  if (valA != null && valB != null && winRule) {
-    if (winRule === "lower") {
-      if (valA < valB) elA.classList.add("winner");
-      else if (valB < valA) elB.classList.add("winner");
-    } else if (winRule === "higher") {
-      if (valA > valB) elA.classList.add("winner");
-      else if (valB > valA) elB.classList.add("winner");
+    // Determine winner
+    let winnerIdx = -1;
+    if (m.winRule) {
+      const validValues = values.map((v, i) => (v != null && v > 0) ? { v, i } : null).filter(Boolean);
+      if (validValues.length > 0) {
+        if (m.winRule === "lower") {
+          validValues.sort((a, b) => a.v - b.v);
+        } else {
+          validValues.sort((a, b) => b.v - a.v);
+        }
+        winnerIdx = validValues[0].i;
+      }
     }
+
+    bodyRows += `<tr><td class="metric-label-cell">${m.label}</td>`;
+    values.forEach((v, idx) => {
+      const c = SLOT_COLORS[idx % SLOT_COLORS.length];
+      const cls = (idx === winnerIdx) ? " winner" : "";
+      const display = (v != null && v > 0) ? m.format(v) : "—";
+      bodyRows += `<td style="color:${c.color}" class="${cls}">${display}</td>`;
+    });
+    bodyRows += `</tr>`;
   }
+
+  dom.metricsTable.innerHTML = headerRow + bodyRows;
 }
 
 function formatMs(ms) {
@@ -754,57 +790,46 @@ function autoResize() {
 }
 
 function stopAll() {
-  if (abState.abortControllerA) abState.abortControllerA.abort();
-  if (abState.abortControllerB) abState.abortControllerB.abort();
+  for (const slot of state.slots) {
+    if (slot.response?.abortController) slot.response.abortController.abort();
+  }
 }
 
 function clearArena() {
-  abState.messages = [];
-  abState.responseA = null;
-  abState.responseB = null;
-  abState.verdict = null;
-  abState.blindRevealed = false;
+  state.messages = [];
+  state.verdict = null;
+  state.blindRevealed = false;
+  for (const slot of state.slots) slot.response = null;
 
-  dom.messagesA.innerHTML = `<div class="arena-welcome"><p>Responses from <strong>Model A</strong> will appear here.</p></div>`;
-  dom.messagesB.innerHTML = `<div class="arena-welcome"><p>Responses from <strong>Model B</strong> will appear here.</p></div>`;
-  dom.statusA.textContent = "";
-  dom.statusA.className = "pane-status";
-  dom.statusB.textContent = "";
-  dom.statusB.className = "pane-status";
+  renderArena();
   dom.verdictBar.style.display = "none";
   dom.metricsBar.style.display = "none";
-
-  $$(".verdict-btn").forEach(btn => btn.classList.remove("selected"));
   applyMode();
   saveState();
 }
 
-// ─── Divider Drag ───────────────────────────────────────────────────────────
+function getModelDisplayName(provider, modelId) {
+  if (!modelId) return "";
+  const cat = MODEL_CATALOG.find(m => m.provider === provider && m.id === modelId);
+  return cat ? cat.name : modelId;
+}
 
-function setupDividerDrag() {
-  let isDragging = false;
+// ─── Mode ───────────────────────────────────────────────────────────────────
 
-  dom.arenaDivider.addEventListener("mousedown", (e) => {
-    isDragging = true;
-    dom.arenaDivider.classList.add("dragging");
-    e.preventDefault();
-  });
+function applyMode() {
+  document.body.classList.remove("blind-mode", "revealed");
+  state.blindRevealed = false;
 
-  document.addEventListener("mousemove", (e) => {
-    if (!isDragging) return;
-    const arenaRect = dom.arena.getBoundingClientRect();
-    const pct = ((e.clientX - arenaRect.left) / arenaRect.width) * 100;
-    const clamped = Math.max(20, Math.min(80, pct));
-    dom.paneA.style.flex = `0 0 ${clamped}%`;
-    dom.paneB.style.flex = `0 0 ${100 - clamped}%`;
-  });
-
-  document.addEventListener("mouseup", () => {
-    if (isDragging) {
-      isDragging = false;
-      dom.arenaDivider.classList.remove("dragging");
-    }
-  });
+  if (state.mode === "blind") {
+    document.body.classList.add("blind-mode");
+    // Reset pane labels to generic
+    state.slots.forEach((slot, idx) => {
+      const label = dom.arena.querySelector(`.pane-label[data-slot-id="${slot.id}"]`);
+      if (label) label.textContent = `Model ${SLOT_LETTERS[idx] || idx + 1}`;
+    });
+  } else {
+    state.slots.forEach(slot => updatePaneLabel(slot));
+  }
 }
 
 // ─── History ────────────────────────────────────────────────────────────────
@@ -815,136 +840,151 @@ function openHistory() {
   dom.historyOverlay.style.display = "flex";
 }
 
-function closeHistory() {
-  dom.historyOverlay.style.display = "none";
-}
+function closeHistory() { dom.historyOverlay.style.display = "none"; }
 
 function updateHistoryBadge() {
-  dom.historyCount.textContent = abState.history.length || "";
+  dom.historyCount.textContent = state.history.length || "";
 }
 
 function renderHistorySummary() {
-  const h = abState.history;
-  if (h.length === 0) {
-    dom.historySummary.innerHTML = "";
-    return;
+  const h = state.history;
+  if (h.length === 0) { dom.historySummary.innerHTML = ""; return; }
+
+  // Count wins per model (aggregate by provider/model)
+  const modelWins = {};
+  let ties = 0, allBad = 0;
+
+  for (const entry of h) {
+    if (entry.verdict === "tie") { ties++; continue; }
+    if (entry.verdict === "all_bad") { allBad++; continue; }
+    const winIdx = parseInt(entry.verdict);
+    if (isNaN(winIdx) || !entry.slots[winIdx]) continue;
+    const winner = entry.slots[winIdx];
+    const key = `${winner.provider}/${winner.model}`;
+    modelWins[key] = (modelWins[key] || 0) + 1;
   }
 
-  const aWins = h.filter(e => e.verdict === "a").length;
-  const bWins = h.filter(e => e.verdict === "b").length;
-  const ties = h.filter(e => e.verdict === "tie").length;
-  const bothBad = h.filter(e => e.verdict === "both_bad").length;
+  // Sort by wins
+  const sorted = Object.entries(modelWins).sort((a, b) => b[1] - a[1]);
 
-  dom.historySummary.innerHTML = `
-    <div class="summary-stat"><div class="summary-stat-value">${h.length}</div><div class="summary-stat-label">Tests</div></div>
-    <div class="summary-stat"><div class="summary-stat-value" style="color:var(--color-a)">${aWins}</div><div class="summary-stat-label">A Wins</div></div>
-    <div class="summary-stat"><div class="summary-stat-value" style="color:var(--color-b)">${bWins}</div><div class="summary-stat-label">B Wins</div></div>
-    <div class="summary-stat"><div class="summary-stat-value" style="color:var(--color-tie)">${ties}</div><div class="summary-stat-label">Ties</div></div>
-    <div class="summary-stat"><div class="summary-stat-value" style="color:var(--color-bad)">${bothBad}</div><div class="summary-stat-label">Both Bad</div></div>
-  `;
+  let html = `<div class="summary-stat"><div class="summary-stat-value">${h.length}</div><div class="summary-stat-label">Tests</div></div>`;
+  html += `<div class="summary-stat"><div class="summary-stat-value" style="color:var(--color-tie)">${ties}</div><div class="summary-stat-label">Ties</div></div>`;
+  html += `<div class="summary-stat"><div class="summary-stat-value" style="color:var(--color-bad)">${allBad}</div><div class="summary-stat-label">All Bad</div></div>`;
+
+  for (const [key, wins] of sorted.slice(0, 5)) {
+    const name = getModelDisplayName(key.split("/")[0], key.split("/").slice(1).join("/")) || key;
+    html += `<div class="summary-stat"><div class="summary-stat-value" style="color:var(--success)">${wins}</div><div class="summary-stat-label">${esc(name)}</div></div>`;
+  }
+
+  dom.historySummary.innerHTML = html;
 }
 
 function renderHistoryList() {
-  const h = abState.history;
+  const h = state.history;
   if (h.length === 0) {
     dom.historyList.innerHTML = `<div class="history-empty">No tests yet. Send a prompt to get started.</div>`;
     return;
   }
 
-  // Show newest first
   dom.historyList.innerHTML = [...h].reverse().map(entry => {
-    const verdictClass = entry.verdict === "a" ? "a-wins" : entry.verdict === "b" ? "b-wins" : entry.verdict === "tie" ? "tie" : "both-bad";
-    const verdictLabel = entry.verdict === "a" ? "A Wins" : entry.verdict === "b" ? "B Wins" : entry.verdict === "tie" ? "Tie" : "Both Bad";
-    const nameA = getModelDisplayName(entry.providerA, entry.modelA) || entry.modelA;
-    const nameB = getModelDisplayName(entry.providerB, entry.modelB) || entry.modelB;
+    let verdictLabel, verdictStyle;
+    if (entry.verdict === "tie") {
+      verdictLabel = "Tie";
+      verdictStyle = "background:rgba(139,92,246,0.15);color:var(--color-tie)";
+    } else if (entry.verdict === "all_bad") {
+      verdictLabel = "All Bad";
+      verdictStyle = "background:rgba(239,68,68,0.1);color:var(--color-bad)";
+    } else {
+      const winIdx = parseInt(entry.verdict);
+      const winner = entry.slots[winIdx];
+      const letter = SLOT_LETTERS[winIdx] || `${winIdx + 1}`;
+      const c = SLOT_COLORS[winIdx % SLOT_COLORS.length];
+      verdictLabel = `${letter} Wins`;
+      verdictStyle = `background:${c.bg};color:${c.color}`;
+    }
+
+    const models = entry.slots.map((s, i) => {
+      const c = SLOT_COLORS[i % SLOT_COLORS.length];
+      const name = getModelDisplayName(s.provider, s.model) || s.model;
+      return `<span style="color:${c.color}">${esc(name)}</span>`;
+    }).join(` <span style="color:var(--text-muted)">vs</span> `);
+
     const date = new Date(entry.timestamp).toLocaleString();
 
     return `
       <div class="history-item" data-id="${entry.id}">
         <div class="history-item-header">
           <span class="history-item-prompt" title="${esc(entry.prompt)}">${esc(entry.prompt)}</span>
-          <span class="history-item-verdict ${verdictClass}">${verdictLabel}</span>
+          <span class="history-item-verdict" style="${verdictStyle}">${verdictLabel}</span>
         </div>
-        <div class="history-item-models">
-          <span class="history-item-model-a">${esc(nameA)}</span>
-          <span>vs</span>
-          <span class="history-item-model-b">${esc(nameB)}</span>
-        </div>
+        <div class="history-item-models">${models}</div>
         <div class="history-item-date">${date}</div>
       </div>`;
   }).join("");
 
-  // Click to restore a past test
   dom.historyList.querySelectorAll(".history-item").forEach(item => {
     item.addEventListener("click", () => {
-      const entry = abState.history.find(e => e.id === item.dataset.id);
-      if (!entry) return;
-      restoreHistoryEntry(entry);
-      closeHistory();
+      const entry = state.history.find(e => e.id === item.dataset.id);
+      if (entry) { restoreHistoryEntry(entry); closeHistory(); }
     });
   });
 }
 
 function restoreHistoryEntry(entry) {
-  // Clear arena first
   clearArena();
 
-  // Show the prompt and responses
-  appendUserMessage(dom.messagesA, entry.prompt);
-  appendUserMessage(dom.messagesB, entry.prompt);
-
-  if (entry.responseA?.text) {
-    const divA = document.createElement("div");
-    divA.className = "msg assistant";
-    divA.innerHTML = renderMarkdown(entry.responseA.text);
-    dom.messagesA.appendChild(divA);
-  }
-  if (entry.responseA?.error) {
-    const divA = document.createElement("div");
-    divA.className = "msg error";
-    divA.textContent = entry.responseA.error;
-    dom.messagesA.appendChild(divA);
-  }
-
-  if (entry.responseB?.text) {
-    const divB = document.createElement("div");
-    divB.className = "msg assistant";
-    divB.innerHTML = renderMarkdown(entry.responseB.text);
-    dom.messagesB.appendChild(divB);
-  }
-  if (entry.responseB?.error) {
-    const divB = document.createElement("div");
-    divB.className = "msg error";
-    divB.textContent = entry.responseB.error;
-    dom.messagesB.appendChild(divB);
-  }
+  // Show prompt and responses in each pane
+  const panes = dom.arena.querySelectorAll(".pane-messages");
+  entry.slots.forEach((s, idx) => {
+    if (!panes[idx]) return;
+    appendUserMessage(panes[idx], entry.prompt);
+    if (s.responseText) {
+      const div = document.createElement("div");
+      div.className = "msg assistant";
+      div.innerHTML = renderMarkdown(s.responseText);
+      panes[idx].appendChild(div);
+    }
+    if (s.responseError) {
+      const div = document.createElement("div");
+      div.className = "msg error";
+      div.textContent = s.responseError;
+      panes[idx].appendChild(div);
+    }
+  });
 
   // Show verdict
+  renderVerdictButtons();
   dom.verdictBar.style.display = "flex";
-  $$(".verdict-btn").forEach(btn => {
+  dom.verdictButtons.querySelectorAll(".verdict-btn").forEach(btn => {
     btn.classList.toggle("selected", btn.dataset.verdict === entry.verdict);
   });
 
-  // Show metrics
-  abState.responseA = { text: entry.responseA?.text, ttft: entry.metrics?.ttftA, totalTime: entry.metrics?.timeA, usage: { output_tokens: entry.metrics?.tokensA } };
-  abState.responseB = { text: entry.responseB?.text, ttft: entry.metrics?.ttftB, totalTime: entry.metrics?.timeB, usage: { output_tokens: entry.metrics?.tokensB } };
+  // Restore metrics
+  entry.slots.forEach((s, idx) => {
+    if (state.slots[idx]) {
+      state.slots[idx].response = {
+        text: s.responseText, ttft: s.ttft, totalTime: s.totalTime,
+        usage: { output_tokens: s.outputTokens },
+      };
+    }
+  });
   showMetrics();
 }
 
 function exportHistory() {
-  const data = JSON.stringify(abState.history, null, 2);
+  const data = JSON.stringify(state.history, null, 2);
   const blob = new Blob([data], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `ab-test-history-${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `arena-history-${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
   URL.revokeObjectURL(url);
 }
 
 function clearHistory() {
   if (!confirm("Clear all test history? This cannot be undone.")) return;
-  abState.history = [];
+  state.history = [];
   saveState();
   updateHistoryBadge();
   renderHistoryList();
@@ -983,55 +1023,74 @@ function loadState() {
     const theme = localStorage.getItem("agentloop_theme") || "dark";
     document.documentElement.setAttribute("data-theme", theme);
 
-    const saved = JSON.parse(localStorage.getItem("agentloop_ab_state") || "{}");
-    abState.providerA = saved.providerA || "openai";
-    abState.modelA = saved.modelA || "";
-    abState.tempA = saved.tempA ?? 0.7;
-    abState.maxTokensA = saved.maxTokensA || null;
-    abState.providerB = saved.providerB || "anthropic";
-    abState.modelB = saved.modelB || "";
-    abState.tempB = saved.tempB ?? 0.7;
-    abState.maxTokensB = saved.maxTokensB || null;
-    abState.systemMessage = saved.systemMessage || "";
-    abState.corsProxy = saved.corsProxy || "";
-    abState.mode = saved.mode || "side-by-side";
+    const saved = JSON.parse(localStorage.getItem("agentloop_arena_state") || "{}");
+    if (saved.slots && Array.isArray(saved.slots)) {
+      state.slots = saved.slots.map(s => ({
+        id: s.id || genId(),
+        provider: s.provider || "openai",
+        model: s.model || "",
+        temp: s.temp ?? 0.7,
+        maxTokens: s.maxTokens || null,
+        response: null,
+      }));
+    }
+    state.systemMessage = saved.systemMessage || "";
+    state.corsProxy = saved.corsProxy || "";
+    state.mode = saved.mode || "side-by-side";
 
-    abState.history = JSON.parse(localStorage.getItem("agentloop_ab_history") || "[]");
+    state.history = JSON.parse(localStorage.getItem("agentloop_arena_history") || "[]");
 
-    // Load custom providers if they exist
+    // Migrate old A/B state if present
+    if (state.slots.length === 0) {
+      const old = JSON.parse(localStorage.getItem("agentloop_ab_state") || "{}");
+      if (old.providerA) {
+        state.slots = [
+          makeSlot(old.providerA, old.modelA),
+          makeSlot(old.providerB, old.modelB),
+        ];
+        state.slots[0].temp = old.tempA ?? 0.7;
+        state.slots[1].temp = old.tempB ?? 0.7;
+        state.systemMessage = old.systemMessage || "";
+        state.mode = old.mode || "side-by-side";
+      }
+      const oldHistory = JSON.parse(localStorage.getItem("agentloop_ab_history") || "[]");
+      if (oldHistory.length > 0 && state.history.length === 0) {
+        state.history = oldHistory.map(e => ({
+          id: e.id,
+          prompt: e.prompt,
+          slots: [
+            { provider: e.providerA, model: e.modelA, label: "A", responseText: e.responseA?.text || "", responseError: e.responseA?.error || null, ttft: e.metrics?.ttftA, totalTime: e.metrics?.timeA, outputTokens: e.metrics?.tokensA || 0 },
+            { provider: e.providerB, model: e.modelB, label: "B", responseText: e.responseB?.text || "", responseError: e.responseB?.error || null, ttft: e.metrics?.ttftB, totalTime: e.metrics?.timeB, outputTokens: e.metrics?.tokensB || 0 },
+          ],
+          verdict: e.verdict === "a" ? "0" : e.verdict === "b" ? "1" : e.verdict,
+          timestamp: e.timestamp,
+        }));
+      }
+    }
+
+    // Load custom providers
     if (typeof loadCustomProviders === "function") {
       const custom = loadCustomProviders();
       for (const [id, config] of Object.entries(custom)) {
-        if (typeof registerCustomProvider === "function") {
-          registerCustomProvider(id, config);
-        }
+        if (typeof registerCustomProvider === "function") registerCustomProvider(id, config);
       }
     }
-  } catch {
-    // Fresh start on error
-  }
+  } catch { /* fresh start */ }
 }
 
 function saveState() {
   try {
-    localStorage.setItem("agentloop_ab_state", JSON.stringify({
-      providerA: abState.providerA,
-      modelA: abState.modelA,
-      tempA: abState.tempA,
-      maxTokensA: abState.maxTokensA,
-      providerB: abState.providerB,
-      modelB: abState.modelB,
-      tempB: abState.tempB,
-      maxTokensB: abState.maxTokensB,
-      systemMessage: abState.systemMessage,
-      corsProxy: abState.corsProxy,
-      mode: abState.mode,
+    localStorage.setItem("agentloop_arena_state", JSON.stringify({
+      slots: state.slots.map(s => ({
+        id: s.id, provider: s.provider, model: s.model,
+        temp: s.temp, maxTokens: s.maxTokens,
+      })),
+      systemMessage: state.systemMessage,
+      corsProxy: state.corsProxy,
+      mode: state.mode,
     }));
-
-    localStorage.setItem("agentloop_ab_history", JSON.stringify(abState.history));
-  } catch {
-    // localStorage might be full
-  }
+    localStorage.setItem("agentloop_arena_history", JSON.stringify(state.history));
+  } catch { /* localStorage might be full */ }
 }
 
 // ─── Boot ───────────────────────────────────────────────────────────────────

@@ -3,11 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AgentLoop — A/B Testing Arena</title>
+  <title>AgentLoop — Model Arena</title>
   <link rel="stylesheet" href="ab-test.css">
-  <!-- Markdown rendering -->
   <script src="https://cdn.jsdelivr.net/npm/marked@14/marked.min.js"></script>
-  <!-- Code highlighting -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/styles/github-dark.min.css" id="hljs-theme">
   <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/highlight.min.js"></script>
 </head>
@@ -20,7 +18,7 @@
       </a>
       <h1 class="logo">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-        A/B Arena
+        Model Arena
       </h1>
     </div>
     <div class="topbar-center">
@@ -41,73 +39,9 @@
     </div>
   </header>
 
-  <!-- Configuration Panel -->
-  <div class="config-panel">
-    <!-- Model A Config -->
-    <div class="config-side config-a">
-      <div class="config-header">
-        <span class="config-label label-a">Model A</span>
-        <span class="config-model-name" id="model-a-display"></span>
-      </div>
-      <div class="config-controls">
-        <div class="config-row">
-          <select id="provider-a" class="config-select" title="Provider A"></select>
-          <span class="config-sep">/</span>
-          <select id="model-a" class="config-select config-model-select" title="Model A"></select>
-        </div>
-        <div class="config-row config-params">
-          <label class="config-param">
-            <span>Temp</span>
-            <input type="number" id="temp-a" min="0" max="2" step="0.1" value="0.7" class="config-num">
-          </label>
-          <label class="config-param">
-            <span>Max Tokens</span>
-            <input type="number" id="max-tokens-a" placeholder="auto" min="1" max="200000" class="config-num">
-          </label>
-          <label class="config-param">
-            <span>API Key</span>
-            <input type="password" id="key-a" placeholder="sk-..." class="config-key" autocomplete="off">
-          </label>
-        </div>
-      </div>
-    </div>
-
-    <!-- VS Divider -->
-    <div class="config-vs">
-      <span>VS</span>
-      <button id="swap-btn" class="swap-btn" title="Swap A and B">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
-      </button>
-    </div>
-
-    <!-- Model B Config -->
-    <div class="config-side config-b">
-      <div class="config-header">
-        <span class="config-label label-b">Model B</span>
-        <span class="config-model-name" id="model-b-display"></span>
-      </div>
-      <div class="config-controls">
-        <div class="config-row">
-          <select id="provider-b" class="config-select" title="Provider B"></select>
-          <span class="config-sep">/</span>
-          <select id="model-b" class="config-select config-model-select" title="Model B"></select>
-        </div>
-        <div class="config-row config-params">
-          <label class="config-param">
-            <span>Temp</span>
-            <input type="number" id="temp-b" min="0" max="2" step="0.1" value="0.7" class="config-num">
-          </label>
-          <label class="config-param">
-            <span>Max Tokens</span>
-            <input type="number" id="max-tokens-b" placeholder="auto" min="1" max="200000" class="config-num">
-          </label>
-          <label class="config-param">
-            <span>API Key</span>
-            <input type="password" id="key-b" placeholder="sk-..." class="config-key" autocomplete="off">
-          </label>
-        </div>
-      </div>
-    </div>
+  <!-- Model Slots Config (dynamically populated) -->
+  <div class="config-panel" id="config-panel">
+    <!-- Populated by JS -->
   </div>
 
   <!-- System Message (shared) -->
@@ -122,98 +56,31 @@
     </div>
   </div>
 
-  <!-- Arena: Split Response View -->
+  <!-- Arena (dynamically populated N-pane grid) -->
   <div class="arena" id="arena">
-    <!-- Response A -->
-    <div class="arena-pane pane-a" id="pane-a">
-      <div class="pane-header">
-        <span class="pane-label label-a" id="pane-label-a">Model A</span>
-        <span class="pane-status" id="status-a"></span>
-      </div>
-      <div class="pane-messages" id="messages-a">
-        <div class="arena-welcome">
-          <p>Responses from <strong>Model A</strong> will appear here.</p>
-        </div>
-      </div>
-    </div>
-
-    <!-- Resizable Divider -->
-    <div class="arena-divider" id="arena-divider">
-      <div class="divider-grip"></div>
-    </div>
-
-    <!-- Response B -->
-    <div class="arena-pane pane-b" id="pane-b">
-      <div class="pane-header">
-        <span class="pane-label label-b" id="pane-label-b">Model B</span>
-        <span class="pane-status" id="status-b"></span>
-      </div>
-      <div class="pane-messages" id="messages-b">
-        <div class="arena-welcome">
-          <p>Responses from <strong>Model B</strong> will appear here.</p>
-        </div>
-      </div>
-    </div>
+    <!-- Populated by JS -->
   </div>
 
-  <!-- Verdict Bar (appears after both responses complete) -->
+  <!-- Verdict Bar -->
   <div class="verdict-bar" id="verdict-bar" style="display:none">
-    <div class="verdict-prompt">Which response is better?</div>
-    <div class="verdict-buttons">
-      <button class="verdict-btn verdict-a" data-verdict="a">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
-        A is better
-      </button>
-      <button class="verdict-btn verdict-tie" data-verdict="tie">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        Tie
-      </button>
-      <button class="verdict-btn verdict-b" data-verdict="b">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
-        B is better
-      </button>
-      <button class="verdict-btn verdict-skip" data-verdict="both_bad">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 15V9a3 3 0 0 1 3-3l4 9v-11H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3z"/><path d="M17 2h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/></svg>
-        Both Bad
-      </button>
+    <div class="verdict-prompt">Which response is best?</div>
+    <div class="verdict-buttons" id="verdict-buttons">
+      <!-- Populated by JS -->
     </div>
   </div>
 
-  <!-- Comparison Metrics (appears after verdict) -->
+  <!-- Metrics Table -->
   <div class="metrics-bar" id="metrics-bar" style="display:none">
-    <div class="metrics-grid">
-      <div class="metric">
-        <span class="metric-label">Time to First Token</span>
-        <span class="metric-value metric-a" id="metric-ttft-a">—</span>
-        <span class="metric-vs">vs</span>
-        <span class="metric-value metric-b" id="metric-ttft-b">—</span>
-      </div>
-      <div class="metric">
-        <span class="metric-label">Total Time</span>
-        <span class="metric-value metric-a" id="metric-time-a">—</span>
-        <span class="metric-vs">vs</span>
-        <span class="metric-value metric-b" id="metric-time-b">—</span>
-      </div>
-      <div class="metric">
-        <span class="metric-label">Output Tokens</span>
-        <span class="metric-value metric-a" id="metric-tokens-a">—</span>
-        <span class="metric-vs">vs</span>
-        <span class="metric-value metric-b" id="metric-tokens-b">—</span>
-      </div>
-      <div class="metric">
-        <span class="metric-label">Tokens/sec</span>
-        <span class="metric-value metric-a" id="metric-tps-a">—</span>
-        <span class="metric-vs">vs</span>
-        <span class="metric-value metric-b" id="metric-tps-b">—</span>
-      </div>
-    </div>
+    <table class="metrics-table" id="metrics-table">
+      <!-- Populated by JS -->
+    </table>
   </div>
 
   <!-- Input Area -->
   <div class="input-area">
     <div class="input-container">
-      <textarea id="user-input" rows="1" placeholder="Send the same prompt to both models..." autofocus></textarea>
-      <button id="send-btn" class="send-btn" title="Send to both models (Enter)">
+      <textarea id="user-input" rows="1" placeholder="Send the same prompt to all models..." autofocus></textarea>
+      <button id="send-btn" class="send-btn" title="Send to all models (Enter)">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
       </button>
       <button id="stop-btn" class="send-btn stop-btn" title="Stop generation" style="display:none">
@@ -221,7 +88,7 @@
       </button>
     </div>
     <div class="input-footer">
-      <span class="muted">Same prompt sent to both models simultaneously</span>
+      <span class="muted" id="slot-count-label">Same prompt sent to 2 models simultaneously</span>
       <button id="clear-btn" class="text-btn" title="Clear arena">Clear</button>
     </div>
   </div>
@@ -243,11 +110,8 @@
           </button>
         </div>
       </div>
-      <!-- Summary Stats -->
       <div class="history-summary" id="history-summary"></div>
-      <div class="history-list" id="history-list">
-        <!-- Populated dynamically -->
-      </div>
+      <div class="history-list" id="history-list"></div>
     </div>
   </div>
 
