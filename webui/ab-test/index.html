@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AgentLoop — A/B Testing Arena</title>
+  <link rel="stylesheet" href="ab-test.css">
+  <!-- Markdown rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/marked@14/marked.min.js"></script>
+  <!-- Code highlighting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/styles/github-dark.min.css" id="hljs-theme">
+  <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/highlight.min.js"></script>
+</head>
+<body>
+  <!-- Top Bar -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <a href="../" class="back-link" title="Back to Chat">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>
+      </a>
+      <h1 class="logo">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+        A/B Arena
+      </h1>
+    </div>
+    <div class="topbar-center">
+      <div class="mode-tabs">
+        <button class="mode-tab active" data-mode="side-by-side">Side by Side</button>
+        <button class="mode-tab" data-mode="blind">Blind Test</button>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <button id="history-btn" class="icon-btn" title="Test History">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <span id="history-count" class="badge"></span>
+      </button>
+      <button id="theme-toggle" class="icon-btn" title="Toggle theme">
+        <svg id="theme-icon-dark" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        <svg id="theme-icon-light" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Configuration Panel -->
+  <div class="config-panel">
+    <!-- Model A Config -->
+    <div class="config-side config-a">
+      <div class="config-header">
+        <span class="config-label label-a">Model A</span>
+        <span class="config-model-name" id="model-a-display"></span>
+      </div>
+      <div class="config-controls">
+        <div class="config-row">
+          <select id="provider-a" class="config-select" title="Provider A"></select>
+          <span class="config-sep">/</span>
+          <select id="model-a" class="config-select config-model-select" title="Model A"></select>
+        </div>
+        <div class="config-row config-params">
+          <label class="config-param">
+            <span>Temp</span>
+            <input type="number" id="temp-a" min="0" max="2" step="0.1" value="0.7" class="config-num">
+          </label>
+          <label class="config-param">
+            <span>Max Tokens</span>
+            <input type="number" id="max-tokens-a" placeholder="auto" min="1" max="200000" class="config-num">
+          </label>
+          <label class="config-param">
+            <span>API Key</span>
+            <input type="password" id="key-a" placeholder="sk-..." class="config-key" autocomplete="off">
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- VS Divider -->
+    <div class="config-vs">
+      <span>VS</span>
+      <button id="swap-btn" class="swap-btn" title="Swap A and B">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+      </button>
+    </div>
+
+    <!-- Model B Config -->
+    <div class="config-side config-b">
+      <div class="config-header">
+        <span class="config-label label-b">Model B</span>
+        <span class="config-model-name" id="model-b-display"></span>
+      </div>
+      <div class="config-controls">
+        <div class="config-row">
+          <select id="provider-b" class="config-select" title="Provider B"></select>
+          <span class="config-sep">/</span>
+          <select id="model-b" class="config-select config-model-select" title="Model B"></select>
+        </div>
+        <div class="config-row config-params">
+          <label class="config-param">
+            <span>Temp</span>
+            <input type="number" id="temp-b" min="0" max="2" step="0.1" value="0.7" class="config-num">
+          </label>
+          <label class="config-param">
+            <span>Max Tokens</span>
+            <input type="number" id="max-tokens-b" placeholder="auto" min="1" max="200000" class="config-num">
+          </label>
+          <label class="config-param">
+            <span>API Key</span>
+            <input type="password" id="key-b" placeholder="sk-..." class="config-key" autocomplete="off">
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- System Message (shared) -->
+  <div class="system-msg-bar">
+    <button id="system-msg-toggle" class="system-msg-toggle">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+      System Message
+      <svg class="chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+    </button>
+    <div id="system-msg-panel" class="system-msg-panel" style="display:none">
+      <textarea id="system-msg" rows="3" placeholder="You are a helpful assistant."></textarea>
+    </div>
+  </div>
+
+  <!-- Arena: Split Response View -->
+  <div class="arena" id="arena">
+    <!-- Response A -->
+    <div class="arena-pane pane-a" id="pane-a">
+      <div class="pane-header">
+        <span class="pane-label label-a" id="pane-label-a">Model A</span>
+        <span class="pane-status" id="status-a"></span>
+      </div>
+      <div class="pane-messages" id="messages-a">
+        <div class="arena-welcome">
+          <p>Responses from <strong>Model A</strong> will appear here.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Resizable Divider -->
+    <div class="arena-divider" id="arena-divider">
+      <div class="divider-grip"></div>
+    </div>
+
+    <!-- Response B -->
+    <div class="arena-pane pane-b" id="pane-b">
+      <div class="pane-header">
+        <span class="pane-label label-b" id="pane-label-b">Model B</span>
+        <span class="pane-status" id="status-b"></span>
+      </div>
+      <div class="pane-messages" id="messages-b">
+        <div class="arena-welcome">
+          <p>Responses from <strong>Model B</strong> will appear here.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Verdict Bar (appears after both responses complete) -->
+  <div class="verdict-bar" id="verdict-bar" style="display:none">
+    <div class="verdict-prompt">Which response is better?</div>
+    <div class="verdict-buttons">
+      <button class="verdict-btn verdict-a" data-verdict="a">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+        A is better
+      </button>
+      <button class="verdict-btn verdict-tie" data-verdict="tie">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Tie
+      </button>
+      <button class="verdict-btn verdict-b" data-verdict="b">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>
+        B is better
+      </button>
+      <button class="verdict-btn verdict-skip" data-verdict="both_bad">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 15V9a3 3 0 0 1 3-3l4 9v-11H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3z"/><path d="M17 2h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/></svg>
+        Both Bad
+      </button>
+    </div>
+  </div>
+
+  <!-- Comparison Metrics (appears after verdict) -->
+  <div class="metrics-bar" id="metrics-bar" style="display:none">
+    <div class="metrics-grid">
+      <div class="metric">
+        <span class="metric-label">Time to First Token</span>
+        <span class="metric-value metric-a" id="metric-ttft-a">—</span>
+        <span class="metric-vs">vs</span>
+        <span class="metric-value metric-b" id="metric-ttft-b">—</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Total Time</span>
+        <span class="metric-value metric-a" id="metric-time-a">—</span>
+        <span class="metric-vs">vs</span>
+        <span class="metric-value metric-b" id="metric-time-b">—</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Output Tokens</span>
+        <span class="metric-value metric-a" id="metric-tokens-a">—</span>
+        <span class="metric-vs">vs</span>
+        <span class="metric-value metric-b" id="metric-tokens-b">—</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Tokens/sec</span>
+        <span class="metric-value metric-a" id="metric-tps-a">—</span>
+        <span class="metric-vs">vs</span>
+        <span class="metric-value metric-b" id="metric-tps-b">—</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Input Area -->
+  <div class="input-area">
+    <div class="input-container">
+      <textarea id="user-input" rows="1" placeholder="Send the same prompt to both models..." autofocus></textarea>
+      <button id="send-btn" class="send-btn" title="Send to both models (Enter)">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+      </button>
+      <button id="stop-btn" class="send-btn stop-btn" title="Stop generation" style="display:none">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+      </button>
+    </div>
+    <div class="input-footer">
+      <span class="muted">Same prompt sent to both models simultaneously</span>
+      <button id="clear-btn" class="text-btn" title="Clear arena">Clear</button>
+    </div>
+  </div>
+
+  <!-- History Drawer -->
+  <div id="history-overlay" class="history-overlay" style="display:none">
+    <div class="history-drawer">
+      <div class="history-header">
+        <h2>Test History</h2>
+        <div class="history-actions">
+          <button id="export-history-btn" class="icon-btn" title="Export as JSON">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          </button>
+          <button id="clear-history-btn" class="icon-btn" title="Clear all history">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          </button>
+          <button id="history-close" class="icon-btn" title="Close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+      </div>
+      <!-- Summary Stats -->
+      <div class="history-summary" id="history-summary"></div>
+      <div class="history-list" id="history-list">
+        <!-- Populated dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <script src="../providers.js"></script>
+  <script src="ab-test.js"></script>
+</body>
+</html>
