@@ -463,9 +463,9 @@ function switchSettingsTab(tabId) {
 
 // ─── Provider Handling ──────────────────────────────────────────────────────
 
-/** Rebuild the provider <select> to include custom providers */
+/** Rebuild the provider <select> from the single-source-of-truth catalog + custom providers */
 function rebuildProviderSelect() {
-  const builtInProviders = ["openai", "anthropic", "google", "groq", "together", "mistral", "deepseek", "fireworks", "perplexity", "cohere", "xai", "ollama"];
+  const builtInProviders = Object.keys(CATALOG_PROVIDERS);
   const customProviders = Object.keys(PROVIDERS).filter(id => PROVIDERS[id].isCustom);
 
   let html = "";

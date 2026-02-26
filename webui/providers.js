@@ -136,208 +136,53 @@ const PROVIDERS = {
     strip: ["tool_choice", "logprobs", "top_logprobs", "logit_bias", "n", "user"],
     corsNote: "Runs locally — no CORS issues.",
   },
+
+  moonshot: {
+    name: "Moonshot AI",
+    baseURL: "https://api.moonshot.ai/v1",
+    auth: "bearer",
+    defaultModel: "kimi-k2.5",
+    models: ["kimi-k2.5", "kimi-k2-0905-preview", "kimi-k2-thinking", "moonshot-v1-128k", "moonshot-v1-32k"],
+    chatEndpoint: (baseURL, _model) => `${baseURL}/chat/completions`,
+    corsNote: "May require a CORS proxy.",
+  },
+
+  cerebras: {
+    name: "Cerebras",
+    baseURL: "https://api.cerebras.ai/v1",
+    auth: "bearer",
+    defaultModel: "gpt-oss-120b",
+    models: ["gpt-oss-120b", "qwen-3-235b-a22b-instruct-2507", "zai-glm-4.7", "llama3.1-8b"],
+    chatEndpoint: (baseURL, _model) => `${baseURL}/chat/completions`,
+    corsNote: "May require a CORS proxy.",
+  },
+
+  sambanova: {
+    name: "SambaNova",
+    baseURL: "https://api.sambanova.ai/v1",
+    auth: "bearer",
+    defaultModel: "DeepSeek-V3.1",
+    models: ["DeepSeek-V3.1", "DeepSeek-R1-0528", "DeepSeek-V3-0324", "Llama-4-Maverick-17B-128E-Instruct", "Meta-Llama-3.3-70B-Instruct", "Meta-Llama-3.1-8B-Instruct", "Qwen3-235B-A22B-Instruct-2507", "Qwen3-32B"],
+    chatEndpoint: (baseURL, _model) => `${baseURL}/chat/completions`,
+    corsNote: "May require a CORS proxy.",
+  },
+
+  ai21: {
+    name: "AI21 Labs",
+    baseURL: "https://api.ai21.com/studio/v1",
+    auth: "bearer",
+    defaultModel: "jamba-large",
+    models: ["jamba-large", "jamba-mini"],
+    chatEndpoint: (baseURL, _model) => `${baseURL}/chat/completions`,
+    corsNote: "May require a CORS proxy.",
+  },
 };
 
 // ─── Model Catalog ──────────────────────────────────────────────────────────
+// Loaded from catalog.generated.js (generated from src/catalog.json).
+// To add/change models, edit src/catalog.json then run: node scripts/sync-webui-catalog.mjs
 
-const MODEL_CATALOG = [
-  // ── OpenAI ──────────────────────────────────────────────────────────────
-  { id: "gpt-5.2", name: "GPT-5.2", provider: "openai", categories: ["flagship"], ctx: 128000, maxOut: 16384, isDefault: true },
-  { id: "gpt-5", name: "GPT-5", provider: "openai", categories: ["flagship"], ctx: 128000, maxOut: 16384 },
-  { id: "gpt-5-mini", name: "GPT-5 Mini", provider: "openai", categories: ["fast"], ctx: 128000, maxOut: 16384 },
-  { id: "gpt-4.1", name: "GPT-4.1", provider: "openai", categories: ["flagship", "code"], ctx: 1000000, maxOut: 32768 },
-  { id: "gpt-4.1-mini", name: "GPT-4.1 Mini", provider: "openai", categories: ["fast"], ctx: 1000000, maxOut: 32768 },
-  { id: "gpt-4.1-nano", name: "GPT-4.1 Nano", provider: "openai", categories: ["fast"], ctx: 1000000, maxOut: 32768 },
-  { id: "o4-mini", name: "o4-mini", provider: "openai", categories: ["reasoning"], ctx: 200000, maxOut: 100000 },
-  { id: "o3", name: "o3", provider: "openai", categories: ["reasoning"], ctx: 200000, maxOut: 100000 },
-  { id: "o3-pro", name: "o3 Pro", provider: "openai", categories: ["reasoning"], ctx: 200000, maxOut: 100000 },
-  { id: "o3-mini", name: "o3 Mini", provider: "openai", categories: ["reasoning", "fast"], ctx: 200000, maxOut: 100000 },
-  { id: "o1", name: "o1", provider: "openai", categories: ["reasoning"], ctx: 200000, maxOut: 100000 },
-  { id: "gpt-4o", name: "GPT-4o", provider: "openai", categories: ["flagship", "vision"], ctx: 128000, maxOut: 16384 },
-  { id: "gpt-4o-mini", name: "GPT-4o Mini", provider: "openai", categories: ["fast", "vision"], ctx: 128000, maxOut: 16384 },
-  { id: "gpt-4o-search-preview", name: "GPT-4o Search", provider: "openai", categories: ["search"], ctx: 128000, maxOut: 16384 },
-
-  // ── Anthropic ───────────────────────────────────────────────────────────
-  { id: "claude-opus-4-6", name: "Claude Opus 4.6", provider: "anthropic", categories: ["flagship", "code", "reasoning"], ctx: 200000, maxOut: 128000 },
-  { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", provider: "anthropic", categories: ["flagship", "code"], ctx: 200000, maxOut: 64000, isDefault: true },
-  { id: "claude-opus-4-5-20251101", name: "Claude Opus 4.5", provider: "anthropic", categories: ["flagship", "code"], ctx: 200000, maxOut: 32000 },
-  { id: "claude-sonnet-4-5-20241022", name: "Claude Sonnet 4.5", provider: "anthropic", categories: ["flagship", "code"], ctx: 200000, maxOut: 16000 },
-  { id: "claude-opus-4-1-20250630", name: "Claude Opus 4.1", provider: "anthropic", categories: ["flagship", "code"], ctx: 200000, maxOut: 32000 },
-  { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", provider: "anthropic", categories: ["flagship", "code"], ctx: 200000, maxOut: 16000 },
-  { id: "claude-3-5-haiku-20241022", name: "Claude 3.5 Haiku", provider: "anthropic", categories: ["fast"], ctx: 200000, maxOut: 8192 },
-
-  // ── Google Gemini ───────────────────────────────────────────────────────
-  { id: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro (Preview)", provider: "google", categories: ["flagship", "reasoning", "code"], ctx: 1000000, maxOut: 65536 },
-  { id: "gemini-3-flash-preview", name: "Gemini 3 Flash (Preview)", provider: "google", categories: ["fast", "reasoning", "vision"], ctx: 1000000, maxOut: 65536 },
-  { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", provider: "google", categories: ["flagship", "reasoning", "code"], ctx: 1000000, maxOut: 65536, isDefault: true },
-  { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", provider: "google", categories: ["fast", "reasoning"], ctx: 1000000, maxOut: 65536 },
-  { id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash Lite", provider: "google", categories: ["fast"], ctx: 1000000, maxOut: 65536 },
-  { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash", provider: "google", categories: ["fast", "vision"], ctx: 1000000, maxOut: 8192 },
-  { id: "gemini-2.0-flash-lite", name: "Gemini 2.0 Flash Lite", provider: "google", categories: ["fast"], ctx: 1000000, maxOut: 8192 },
-
-  // ── Groq ────────────────────────────────────────────────────────────────
-  { id: "meta-llama/llama-4-maverick-17b-128e-instruct", name: "Llama 4 Maverick", provider: "groq", categories: ["flagship", "vision"], ctx: 128000 },
-  { id: "meta-llama/llama-4-scout-17b-16e-instruct", name: "Llama 4 Scout", provider: "groq", categories: ["fast", "vision"], ctx: 128000, isDefault: true },
-  { id: "llama-3.3-70b-versatile", name: "Llama 3.3 70B", provider: "groq", categories: ["flagship"], ctx: 128000 },
-  { id: "llama-3.1-8b-instant", name: "Llama 3.1 8B", provider: "groq", categories: ["fast"], ctx: 128000 },
-  { id: "qwen/qwen-3-32b", name: "Qwen 3 32B", provider: "groq", categories: ["flagship", "reasoning"], ctx: 128000 },
-  { id: "deepseek-r1-distill-llama-70b", name: "DeepSeek R1 Distill 70B", provider: "groq", categories: ["reasoning"], ctx: 128000 },
-  { id: "openai/gpt-oss-120b", name: "GPT-OSS 120B", provider: "groq", categories: ["flagship"], ctx: 128000 },
-
-  // ── Together AI ─────────────────────────────────────────────────────────
-  { id: "deepseek-ai/DeepSeek-R1", name: "DeepSeek R1", provider: "together", categories: ["reasoning"], ctx: 128000 },
-  { id: "deepseek-ai/DeepSeek-V3.1", name: "DeepSeek V3.1", provider: "together", categories: ["flagship"], ctx: 128000 },
-  { id: "DeepSeek-AI/DeepSeek-V3-2-Exp", name: "DeepSeek V3.2 Exp", provider: "together", categories: ["flagship"], ctx: 128000 },
-  { id: "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8", name: "Llama 4 Maverick", provider: "together", categories: ["flagship"], ctx: 128000 },
-  { id: "meta-llama/Llama-4-Scout-17B-16E-Instruct", name: "Llama 4 Scout", provider: "together", categories: ["fast"], ctx: 128000 },
-  { id: "meta-llama/Llama-3.3-70B-Instruct-Turbo", name: "Llama 3.3 70B Turbo", provider: "together", categories: ["flagship"], ctx: 128000, isDefault: true },
-  { id: "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo", name: "Llama 3.1 405B Turbo", provider: "together", categories: ["flagship"], ctx: 128000 },
-  { id: "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo", name: "Llama 3.1 8B Turbo", provider: "together", categories: ["fast"], ctx: 128000 },
-  { id: "Qwen/Qwen2.5-72B-Instruct-Turbo", name: "Qwen 2.5 72B Turbo", provider: "together", categories: ["flagship"], ctx: 128000 },
-  { id: "Qwen/QwQ-32B", name: "Qwen QwQ 32B", provider: "together", categories: ["reasoning"], ctx: 128000 },
-  { id: "Qwen/Qwen2.5-Coder-32B-Instruct", name: "Qwen 2.5 Coder 32B", provider: "together", categories: ["code"], ctx: 128000 },
-  { id: "mistralai/Mistral-Small-24B-Instruct-2501", name: "Mistral Small 3", provider: "together", categories: ["fast"], ctx: 32000 },
-
-  // ── Mistral AI ──────────────────────────────────────────────────────────
-  { id: "mistral-large-latest", name: "Mistral Large 3", provider: "mistral", categories: ["flagship"], ctx: 128000, isDefault: true },
-  { id: "mistral-medium-latest", name: "Mistral Medium 3", provider: "mistral", categories: ["flagship"], ctx: 128000 },
-  { id: "mistral-small-latest", name: "Mistral Small 3.2", provider: "mistral", categories: ["fast"], ctx: 128000 },
-  { id: "magistral-medium-latest", name: "Magistral Medium", provider: "mistral", categories: ["reasoning"], ctx: 128000 },
-  { id: "magistral-small-latest", name: "Magistral Small", provider: "mistral", categories: ["reasoning", "fast"], ctx: 128000 },
-  { id: "codestral-latest", name: "Codestral", provider: "mistral", categories: ["code"], ctx: 256000 },
-  { id: "devstral-medium-latest", name: "Devstral Medium", provider: "mistral", categories: ["code"], ctx: 256000 },
-  { id: "pixtral-large-latest", name: "Pixtral Large", provider: "mistral", categories: ["vision", "flagship"], ctx: 128000 },
-  { id: "ministral-8b-latest", name: "Ministral 8B", provider: "mistral", categories: ["fast"], ctx: 128000 },
-  { id: "ministral-3b-latest", name: "Ministral 3B", provider: "mistral", categories: ["fast"], ctx: 128000 },
-
-  // ── DeepSeek ────────────────────────────────────────────────────────────
-  { id: "deepseek-chat", name: "DeepSeek V3.2 Chat", provider: "deepseek", categories: ["flagship", "code"], ctx: 128000, maxOut: 8192, isDefault: true },
-  { id: "deepseek-reasoner", name: "DeepSeek V3.2 Reasoner", provider: "deepseek", categories: ["reasoning"], ctx: 128000, maxOut: 8192 },
-
-  // ── Fireworks AI ────────────────────────────────────────────────────────
-  { id: "accounts/fireworks/models/deepseek-v3p2", name: "DeepSeek V3.2", provider: "fireworks", categories: ["flagship"], ctx: 160000, isDefault: true },
-  { id: "accounts/fireworks/models/deepseek-r1-0528", name: "DeepSeek R1", provider: "fireworks", categories: ["reasoning"], ctx: 160000 },
-  { id: "accounts/fireworks/models/llama-v3p3-70b-instruct", name: "Llama 3.3 70B", provider: "fireworks", categories: ["flagship"], ctx: 128000 },
-  { id: "accounts/fireworks/models/llama-v3p1-8b-instruct", name: "Llama 3.1 8B", provider: "fireworks", categories: ["fast"], ctx: 128000 },
-  { id: "accounts/fireworks/models/qwen3-coder-480b-a35b-instruct", name: "Qwen3 Coder 480B", provider: "fireworks", categories: ["code"], ctx: 256000 },
-
-  // ── Perplexity ──────────────────────────────────────────────────────────
-  { id: "sonar-pro", name: "Sonar Pro", provider: "perplexity", categories: ["search", "flagship"], ctx: 200000, isDefault: true },
-  { id: "sonar", name: "Sonar", provider: "perplexity", categories: ["search", "fast"], ctx: 128000 },
-  { id: "sonar-reasoning-pro", name: "Sonar Reasoning Pro", provider: "perplexity", categories: ["search", "reasoning"], ctx: 128000 },
-  { id: "sonar-reasoning", name: "Sonar Reasoning", provider: "perplexity", categories: ["search", "reasoning"], ctx: 128000 },
-  { id: "sonar-deep-research", name: "Sonar Deep Research", provider: "perplexity", categories: ["search", "reasoning"], ctx: 128000 },
-
-  // ── Cohere ──────────────────────────────────────────────────────────────
-  { id: "command-a-03-2025", name: "Command A", provider: "cohere", categories: ["flagship"], ctx: 256000, isDefault: true },
-  { id: "command-r-plus-08-2024", name: "Command R+", provider: "cohere", categories: ["flagship"], ctx: 128000 },
-  { id: "command-r-08-2024", name: "Command R", provider: "cohere", categories: ["fast"], ctx: 128000 },
-  { id: "c4ai-command-r7b-12-2024", name: "Command R7B", provider: "cohere", categories: ["fast"], ctx: 128000 },
-
-  // ── xAI (Grok) ─────────────────────────────────────────────────────────
-  { id: "grok-4-1-fast-reasoning", name: "Grok 4.1 Fast Reasoning", provider: "xai", categories: ["flagship", "reasoning"], ctx: 2000000 },
-  { id: "grok-4-1-fast-non-reasoning", name: "Grok 4.1 Fast", provider: "xai", categories: ["flagship", "fast"], ctx: 2000000, isDefault: true },
-  { id: "grok-4", name: "Grok 4", provider: "xai", categories: ["flagship", "reasoning"], ctx: 256000 },
-  { id: "grok-3-beta", name: "Grok 3", provider: "xai", categories: ["flagship"], ctx: 131000 },
-  { id: "grok-3-mini-beta", name: "Grok 3 Mini", provider: "xai", categories: ["fast", "reasoning"], ctx: 131000 },
-  { id: "grok-3-fast-beta", name: "Grok 3 Fast", provider: "xai", categories: ["fast"], ctx: 131000 },
-  { id: "grok-2-1212", name: "Grok 2", provider: "xai", categories: ["flagship"], ctx: 131000 },
-  { id: "grok-2-vision-1212", name: "Grok 2 Vision", provider: "xai", categories: ["vision"], ctx: 131000 },
-  { id: "grok-code-fast-1", name: "Grok Code", provider: "xai", categories: ["code"], ctx: 256000 },
-
-  // ── Ollama (local) ──────────────────────────────────────────────────────
-  { id: "llama4:scout", name: "Llama 4 Scout", provider: "ollama", categories: ["flagship", "vision"], ctx: 128000, isDefault: true },
-  { id: "llama4:maverick", name: "Llama 4 Maverick", provider: "ollama", categories: ["flagship"], ctx: 128000 },
-  { id: "llama3.3", name: "Llama 3.3 70B", provider: "ollama", categories: ["flagship"], ctx: 128000 },
-  { id: "llama3.2", name: "Llama 3.2 3B", provider: "ollama", categories: ["fast"], ctx: 128000 },
-  { id: "qwen3", name: "Qwen 3", provider: "ollama", categories: ["flagship", "reasoning"], ctx: 128000 },
-  { id: "deepseek-r1", name: "DeepSeek R1", provider: "ollama", categories: ["reasoning"], ctx: 128000 },
-  { id: "mistral", name: "Mistral 7B", provider: "ollama", categories: ["fast"], ctx: 32000 },
-  { id: "codellama", name: "Code Llama", provider: "ollama", categories: ["code"], ctx: 16000 },
-  { id: "gemma3", name: "Gemma 3", provider: "ollama", categories: ["fast"], ctx: 128000 },
-  { id: "phi4", name: "Phi-4", provider: "ollama", categories: ["fast", "reasoning"], ctx: 16000 },
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // IMAGE GENERATION MODELS
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  // ── OpenAI — Image ────────────────────────────────────────────────────────
-  { id: "gpt-image-1", name: "GPT Image 1", provider: "openai", modality: "image", categories: ["image"], isDefault: true },
-  { id: "dall-e-3", name: "DALL-E 3", provider: "openai", modality: "image", categories: ["image"] },
-  { id: "dall-e-2", name: "DALL-E 2", provider: "openai", modality: "image", categories: ["image"] },
-
-  // ── Google — Image ────────────────────────────────────────────────────────
-  { id: "imagen-4.0-generate-preview-05-20", name: "Imagen 4", provider: "google", modality: "image", categories: ["image"], isDefault: true },
-  { id: "imagen-3.0-generate-002", name: "Imagen 3", provider: "google", modality: "image", categories: ["image"] },
-  { id: "gemini-2.0-flash-preview-image-generation", name: "Gemini Flash (image gen)", provider: "google", modality: "image", categories: ["image"] },
-
-  // ── xAI — Image ───────────────────────────────────────────────────────────
-  { id: "grok-2-image", name: "Grok 2 Image", provider: "xai", modality: "image", categories: ["image"] },
-
-  // ── Together — Image ──────────────────────────────────────────────────────
-  { id: "black-forest-labs/FLUX.1.1-pro", name: "FLUX 1.1 Pro", provider: "together", modality: "image", categories: ["image"], isDefault: true },
-  { id: "black-forest-labs/FLUX.1-schnell", name: "FLUX Schnell", provider: "together", modality: "image", categories: ["image"] },
-  { id: "stabilityai/stable-diffusion-xl-base-1.0", name: "SDXL 1.0", provider: "together", modality: "image", categories: ["image"] },
-
-  // ── Fireworks — Image ─────────────────────────────────────────────────────
-  { id: "accounts/fireworks/models/flux-1-1-pro", name: "FLUX 1.1 Pro", provider: "fireworks", modality: "image", categories: ["image"] },
-  { id: "accounts/fireworks/models/flux-1-schnell", name: "FLUX Schnell", provider: "fireworks", modality: "image", categories: ["image"] },
-  { id: "accounts/fireworks/models/playground-v2-5-1024px-aesthetic", name: "Playground v2.5", provider: "fireworks", modality: "image", categories: ["image"] },
-
-  // ── Ollama — Image ────────────────────────────────────────────────────────
-  { id: "stable-diffusion", name: "Stable Diffusion", provider: "ollama", modality: "image", categories: ["image"] },
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // AUDIO MODELS (Speech-to-Text + Text-to-Speech)
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  // ── OpenAI — Audio ────────────────────────────────────────────────────────
-  { id: "whisper-1", name: "Whisper v3", provider: "openai", modality: "audio", categories: ["audio"], isDefault: true },
-  { id: "tts-1", name: "TTS-1", provider: "openai", modality: "audio", categories: ["tts"] },
-  { id: "tts-1-hd", name: "TTS-1 HD", provider: "openai", modality: "audio", categories: ["tts"] },
-  { id: "gpt-4o-audio-preview", name: "GPT-4o Audio", provider: "openai", modality: "audio", categories: ["audio"] },
-  { id: "gpt-4o-mini-audio-preview", name: "GPT-4o Mini Audio", provider: "openai", modality: "audio", categories: ["audio"] },
-
-  // ── Google — Audio ────────────────────────────────────────────────────────
-  { id: "gemini-2.5-flash-preview-tts", name: "Gemini 2.5 Flash TTS", provider: "google", modality: "audio", categories: ["tts"] },
-
-  // ── Groq — Audio ──────────────────────────────────────────────────────────
-  { id: "whisper-large-v3-turbo", name: "Whisper Large v3 Turbo", provider: "groq", modality: "audio", categories: ["audio"], isDefault: true },
-  { id: "whisper-large-v3", name: "Whisper Large v3", provider: "groq", modality: "audio", categories: ["audio"] },
-
-  // ── Ollama — Audio ────────────────────────────────────────────────────────
-  { id: "whisper", name: "Whisper", provider: "ollama", modality: "audio", categories: ["audio"] },
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // EMBEDDING MODELS
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  // ── OpenAI — Embedding ────────────────────────────────────────────────────
-  { id: "text-embedding-3-large", name: "Embedding 3 Large", provider: "openai", modality: "embedding", categories: ["embedding"], isDefault: true },
-  { id: "text-embedding-3-small", name: "Embedding 3 Small", provider: "openai", modality: "embedding", categories: ["embedding"] },
-  { id: "text-embedding-ada-002", name: "Embedding Ada 002", provider: "openai", modality: "embedding", categories: ["embedding"] },
-
-  // ── Google — Embedding ────────────────────────────────────────────────────
-  { id: "text-embedding-005", name: "Text Embedding 005", provider: "google", modality: "embedding", categories: ["embedding"], isDefault: true },
-
-  // ── Cohere — Embedding ────────────────────────────────────────────────────
-  { id: "embed-v4.0", name: "Embed v4", provider: "cohere", modality: "embedding", categories: ["embedding"], isDefault: true },
-  { id: "embed-english-v3.0", name: "Embed English v3", provider: "cohere", modality: "embedding", categories: ["embedding"] },
-  { id: "embed-multilingual-v3.0", name: "Embed Multilingual v3", provider: "cohere", modality: "embedding", categories: ["embedding"] },
-
-  // ── Together — Embedding ──────────────────────────────────────────────────
-  { id: "togethercomputer/m2-bert-80M-8k-retrieval", name: "M2 BERT 80M", provider: "together", modality: "embedding", categories: ["embedding"] },
-
-  // ── Mistral — Embedding ───────────────────────────────────────────────────
-  { id: "mistral-embed", name: "Mistral Embed", provider: "mistral", modality: "embedding", categories: ["embedding"] },
-
-  // ── Fireworks — Embedding ─────────────────────────────────────────────────
-  { id: "nomic-ai/nomic-embed-text-v1.5", name: "Nomic Embed v1.5", provider: "fireworks", modality: "embedding", categories: ["embedding"] },
-
-  // ── Ollama — Embedding ────────────────────────────────────────────────────
-  { id: "nomic-embed-text", name: "Nomic Embed Text", provider: "ollama", modality: "embedding", categories: ["embedding"] },
-  { id: "mxbai-embed-large", name: "mxbai Embed Large", provider: "ollama", modality: "embedding", categories: ["embedding"] },
-];
+const MODEL_CATALOG = CATALOG_MODELS; // from catalog.generated.js
 
 // ─── Model Helpers ──────────────────────────────────────────────────────────
 

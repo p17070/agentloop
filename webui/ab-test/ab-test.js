@@ -23,7 +23,7 @@ const SLOT_COLORS = [
 ];
 const SLOT_LETTERS = "ABCDEFGH";
 
-const DEFAULT_PROVIDERS = ["openai", "anthropic", "google", "groq", "together", "mistral", "deepseek", "fireworks"];
+const DEFAULT_PROVIDERS = Object.keys(CATALOG_PROVIDERS); // from catalog.generated.js
 
 // ─── State ──────────────────────────────────────────────────────────────────
 
