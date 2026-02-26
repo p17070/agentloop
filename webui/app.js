@@ -611,9 +611,12 @@ function onModelInputKeydown(e) {
     if (state.hlIndex >= 0 && state.hlIndex < count) {
       selectModel(rows[state.hlIndex].dataset.mid);
     } else {
-      // Use typed value as custom model
+      // Use typed value as custom model — resolve display name to model ID
       const val = dom.modelInput.value.trim();
-      if (val) selectModel(val);
+      if (val) {
+        const match = MODEL_CATALOG.find(m => m.provider === state.provider && (m.name === val || m.id === val));
+        selectModel(match ? match.id : val);
+      }
     }
   } else if (e.key === "Escape") {
     closeCombobox();
@@ -644,7 +647,7 @@ function updateModalityTabVisibility() {
 function renderModelResults() {
   const query = dom.modelInput.value.trim();
   const models = getModelsForProvider(state.provider, state.modality, query);
-  const customTyped = query && !MODEL_CATALOG.some(m => m.provider === state.provider && m.id === query);
+  const customTyped = query && !MODEL_CATALOG.some(m => m.provider === state.provider && (m.id === query || m.name === query));
 
   if (models.length === 0 && !customTyped) {
     dom.modelResults.innerHTML = `<div class="model-results-empty">No models found${query ? ` for "${escapeHtml(query)}"` : ""}</div>`;
