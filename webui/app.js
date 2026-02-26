@@ -573,9 +573,20 @@ function displayModelInInput(modelId) {
   dom.modelInput.value = cat ? cat.name : modelId;
 }
 
+/** Resolve a model value (which may be a display name) to the API model ID. */
+function resolveModelId(val, provider) {
+  if (!val) return val;
+  const p = provider || state.provider;
+  // If it already matches a known model ID, return as-is
+  if (MODEL_CATALOG.some(m => m.provider === p && m.id === val)) return val;
+  // Try matching by display name
+  const byName = MODEL_CATALOG.find(m => m.provider === p && m.name === val);
+  return byName ? byName.id : val;
+}
+
 function selectModel(modelId, close) {
-  state.model = modelId;
-  displayModelInInput(modelId);
+  state.model = resolveModelId(modelId);
+  displayModelInInput(state.model);
   updateTopbar();
   if (close !== false) closeCombobox();
   saveState();
@@ -611,12 +622,9 @@ function onModelInputKeydown(e) {
     if (state.hlIndex >= 0 && state.hlIndex < count) {
       selectModel(rows[state.hlIndex].dataset.mid);
     } else {
-      // Use typed value as custom model — resolve display name to model ID
+      // Use typed value as custom model (selectModel resolves display names)
       const val = dom.modelInput.value.trim();
-      if (val) {
-        const match = MODEL_CATALOG.find(m => m.provider === state.provider && (m.name === val || m.id === val));
-        selectModel(match ? match.id : val);
-      }
+      if (val) selectModel(val);
     }
   } else if (e.key === "Escape") {
     closeCombobox();
@@ -869,7 +877,7 @@ function switchChat(chatId) {
   const chat = getActiveChat();
   if (chat) {
     state.provider = chat.provider;
-    state.model = chat.model;
+    state.model = resolveModelId(chat.model, chat.provider);
     applyProvider(chat.provider);
   }
   renderMessages();
@@ -1725,7 +1733,7 @@ async function runAgentLoop(chat) {
 
     const { url, headers, body } = buildRequest({
       provider: state.provider,
-      model: state.model || PROVIDERS[state.provider].defaultModel,
+      model: resolveModelId(state.model) || PROVIDERS[state.provider].defaultModel,
       messages: apiMessages,
       systemMessage: state.systemMessage,
       temperature: state.temperature,
@@ -2158,7 +2166,7 @@ function loadState() {
     // Load settings
     const settings = JSON.parse(localStorage.getItem("agentloop_settings") || "{}");
     state.provider = settings.provider || "openai";
-    state.model = settings.model || "";
+    state.model = resolveModelId(settings.model, settings.provider) || "";
     state.systemMessage = settings.systemMessage || "";
     state.temperature = settings.temperature ?? 0.7;
     state.maxTokens = settings.maxTokens || null;
