@@ -210,18 +210,7 @@
       <div class="topbar-model-select">
         <div class="topbar-provider-wrap">
           <select id="provider-select" class="topbar-provider-select" title="Provider">
-            <option value="openai">OpenAI</option>
-            <option value="anthropic">Anthropic</option>
-            <option value="google">Google Gemini</option>
-            <option value="groq">Groq</option>
-            <option value="together">Together AI</option>
-            <option value="mistral">Mistral</option>
-            <option value="deepseek">DeepSeek</option>
-            <option value="fireworks">Fireworks</option>
-            <option value="perplexity">Perplexity</option>
-            <option value="cohere">Cohere</option>
-            <option value="xai">xAI</option>
-            <option value="ollama">Ollama</option>
+            <!-- Populated dynamically from CATALOG_PROVIDERS by app.js -->
           </select>
           <button id="add-provider-btn" class="icon-btn topbar-add-provider" title="Add custom provider">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
@@ -319,6 +308,7 @@
     </div>
   </main>
 
+  <script src="catalog.generated.js"></script>
   <script src="mcp-client.js"></script>
   <script src="providers.js"></script>
   <script src="app.js"></script>
