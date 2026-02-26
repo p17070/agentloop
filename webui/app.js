@@ -24,6 +24,8 @@ const state = {
   comboboxOpen: false,
   hlIndex: -1,
   attachments: [],  // { id, file, type, name, size, dataUrl, mimeType }
+  toolApproval: false, // Require user approval before executing tool calls
+  _pendingToolApproval: null, // {resolve, reject} for approval Promise
 };
 
 // ─── DOM Elements ───────────────────────────────────────────────────────────
@@ -95,6 +97,8 @@ const dom = {
   mcpToolsSection: $("#mcp-tools-section"),
   mcpToolCount: $("#mcp-tool-count"),
   mcpToolList: $("#mcp-tool-list"),
+  mcpDropdown: $("#mcp-dropdown"),
+  toolApprovalToggle: $("#tool-approval-toggle"),
 };
 
 // ─── Initialization ─────────────────────────────────────────────────────────
@@ -118,6 +122,11 @@ function init() {
       renderMcpToolList();
       updateMcpIndicator();
     });
+  }
+
+  // Apply tool approval setting
+  if (dom.toolApprovalToggle) {
+    dom.toolApprovalToggle.checked = state.toolApproval;
   }
 
   // Configure marked
@@ -322,9 +331,24 @@ function setupEventListeners() {
 
   // MCP
   dom.mcpAddBtn.addEventListener("click", handleMcpAddServer);
-  dom.mcpIndicator.addEventListener("click", () => openSettingsModal("mcp"));
+  dom.mcpIndicator.addEventListener("click", toggleMcpDropdown);
   dom.mcpServerUrl.addEventListener("keydown", (e) => {
     if (e.key === "Enter") handleMcpAddServer();
+  });
+
+  // Tool approval toggle
+  if (dom.toolApprovalToggle) {
+    dom.toolApprovalToggle.addEventListener("change", (e) => {
+      state.toolApproval = e.target.checked;
+      saveState();
+    });
+  }
+
+  // Close MCP dropdown on click outside
+  document.addEventListener("click", (e) => {
+    if (dom.mcpDropdown && !dom.mcpDropdown.contains(e.target) && !dom.mcpIndicator.contains(e.target)) {
+      dom.mcpDropdown.style.display = "none";
+    }
   });
 
   // Keyboard shortcuts
@@ -996,9 +1020,32 @@ function renderMessages() {
     return;
   }
 
-  dom.messages.innerHTML = chat.messages
-    .map((msg, i) => renderMessage(msg, i))
-    .join("");
+  // Render messages, pairing tool_call + tool_result into unified blocks
+  let messagesHtml = "";
+  let i = 0;
+  while (i < chat.messages.length) {
+    const msg = chat.messages[i];
+    if (msg.role === "tool_call") {
+      const next = chat.messages[i + 1];
+      if (next && next.role === "tool_result") {
+        messagesHtml += renderToolExecutionBlock(msg, next, i);
+        i += 2;
+        continue;
+      }
+      // tool_call without result = still executing
+      messagesHtml += renderToolExecutionBlock(msg, null, i);
+      i++;
+      continue;
+    }
+    if (msg.role === "tool_result") {
+      // Orphaned tool_result (shouldn't happen, but skip it)
+      i++;
+      continue;
+    }
+    messagesHtml += renderMessage(msg, i);
+    i++;
+  }
+  dom.messages.innerHTML = messagesHtml;
 
   // Highlight code blocks
   dom.messages.querySelectorAll("pre code").forEach(block => {
@@ -1020,21 +1067,10 @@ function renderMessages() {
 function renderMessage(msg, index) {
   const isUser = msg.role === "user";
   const isError = msg.role === "error";
-  const isToolCall = msg.role === "tool_call";
-  const isToolResult = msg.role === "tool_result";
 
   // Determine role class and avatar
   let roleClass, avatar;
-  if (isToolCall) {
-    roleClass = "tool-call";
-    avatar = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>`;
-  } else if (isToolResult) {
-    roleClass = "tool-result";
-    const hasError = msg._results?.some(r => r.isError);
-    avatar = hasError
-      ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`
-      : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>`;
-  } else if (isError) {
+  if (isError) {
     roleClass = "error";
     avatar = "!";
   } else {
@@ -1062,29 +1098,11 @@ function renderMessage(msg, index) {
 
   // Build content
   let content;
-  if (isToolCall && msg._toolCallData) {
-    content = msg._toolCallData.map(tc => {
-      let argsDisplay;
-      try {
-        const parsed = JSON.parse(tc.arguments);
-        argsDisplay = JSON.stringify(parsed, null, 2);
-      } catch {
-        argsDisplay = tc.arguments;
-      }
-      return `<div class="tool-call-block"><div class="tool-call-name">${escapeHtml(tc.name)}</div><pre class="tool-call-args"><code>${escapeHtml(argsDisplay)}</code></pre></div>`;
-    }).join("");
-  } else if (isToolResult && msg._results) {
-    content = msg._results.map(r => {
-      const cls = r.isError ? "tool-result-error" : "tool-result-ok";
-      return `<div class="tool-result-block ${cls}"><div class="tool-result-name">${escapeHtml(r.name)}</div><div class="tool-result-content">${renderMarkdown(r.content)}</div></div>`;
-    }).join("");
-  } else {
-    // Extract text for display — content may be a string or an array of content parts
-    const displayText = typeof msg.content === "string"
-      ? msg.content
-      : (Array.isArray(msg.content) ? msg.content.filter(p => p.type === "text").map(p => p.text).join("\n") : "");
-    content = renderMarkdown(displayText);
-  }
+  // Extract text for display — content may be a string or an array of content parts
+  const displayText = typeof msg.content === "string"
+    ? msg.content
+    : (Array.isArray(msg.content) ? msg.content.filter(p => p.type === "text").map(p => p.text).join("\n") : "");
+  content = renderMarkdown(displayText);
 
   let meta = "";
   if (msg.usage) {
@@ -1097,6 +1115,181 @@ function renderMessage(msg, index) {
       <div class="message-body">${attachmentHtml}${content}${meta}</div>
     </div>`;
 }
+
+// ─── SVG Icons for Tool Execution ────────────────────────────────────────────
+
+const TOOL_ICONS = {
+  wrench: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>`,
+  check: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>`,
+  error: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`,
+  spinner: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>`,
+  chevronDown: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>`,
+  pending: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
+};
+
+/**
+ * Render a unified tool execution block that pairs tool_call and tool_result.
+ * Shows each tool as a collapsible row with status, args, and result.
+ *
+ * @param {object} toolCallMsg   The tool_call message (always present)
+ * @param {object|null} toolResultMsg  The tool_result message (null if still executing)
+ * @param {number} startIndex    Message index for DOM targeting
+ */
+function renderToolExecutionBlock(toolCallMsg, toolResultMsg, startIndex) {
+  const toolCalls = toolCallMsg._toolCallData || [];
+  const results = toolResultMsg?._results || [];
+  const isExecuting = !toolResultMsg;
+  const hasErrors = results.some(r => r.isError);
+  const isPendingApproval = toolCallMsg._pendingApproval;
+
+  // Header status
+  let statusBadge = "";
+  if (isPendingApproval) {
+    statusBadge = `<span class="tool-exec-badge pending">awaiting approval</span>`;
+  } else if (isExecuting) {
+    statusBadge = `<span class="tool-exec-badge executing"><span class="tool-exec-spinner">${TOOL_ICONS.spinner}</span> running</span>`;
+  } else if (hasErrors) {
+    statusBadge = `<span class="tool-exec-badge error">error</span>`;
+  } else {
+    statusBadge = `<span class="tool-exec-badge success">done</span>`;
+  }
+
+  let html = `<div class="tool-exec-block" data-index="${startIndex}" data-executing="${isExecuting}">`;
+
+  // Header
+  html += `<div class="tool-exec-header" onclick="toggleToolBlock(this)">`;
+  html += `<span class="tool-exec-icon">${TOOL_ICONS.wrench}</span>`;
+  html += `<span class="tool-exec-title">${toolCalls.length} tool call${toolCalls.length !== 1 ? "s" : ""}</span>`;
+  html += statusBadge;
+  html += `<span class="tool-exec-chevron">${TOOL_ICONS.chevronDown}</span>`;
+  html += `</div>`;
+
+  // Approval buttons (if pending)
+  if (isPendingApproval) {
+    html += `<div class="tool-exec-approval" id="tool-approval-${startIndex}">`;
+    html += `<button class="btn btn-primary tool-approve-btn" onclick="approveToolCalls(${startIndex})">`;
+    html += `${TOOL_ICONS.check} Approve & Run</button>`;
+    html += `<button class="btn btn-ghost tool-reject-btn" onclick="rejectToolCalls(${startIndex})">`;
+    html += `${TOOL_ICONS.error} Reject</button>`;
+    html += `</div>`;
+  }
+
+  // Tool items
+  html += `<div class="tool-exec-items">`;
+
+  for (let j = 0; j < toolCalls.length; j++) {
+    const tc = toolCalls[j];
+    const result = results.find(r => r.callId === tc.id || r.name === tc.name);
+    let status;
+    if (isPendingApproval) {
+      status = "pending";
+    } else if (isExecuting && !result) {
+      status = "queued";
+    } else if (result?.isError) {
+      status = "error";
+    } else if (result) {
+      status = "done";
+    } else {
+      status = "queued";
+    }
+
+    // Parse args for display
+    let argsDisplay;
+    try {
+      const parsed = JSON.parse(tc.arguments);
+      argsDisplay = JSON.stringify(parsed, null, 2);
+    } catch {
+      argsDisplay = tc.arguments || "{}";
+    }
+
+    // Compact args summary
+    let argsSummary = "";
+    try {
+      const parsed = JSON.parse(tc.arguments);
+      const keys = Object.keys(parsed);
+      if (keys.length === 0) {
+        argsSummary = "";
+      } else if (keys.length <= 2) {
+        argsSummary = Object.entries(parsed).map(([k, v]) => {
+          const vStr = typeof v === "string" ? (v.length > 30 ? `"${v.slice(0, 30)}..."` : `"${v}"`) : JSON.stringify(v);
+          return `${k}: ${vStr}`;
+        }).join(", ");
+      } else {
+        argsSummary = `${keys.length} params`;
+      }
+    } catch {
+      argsSummary = tc.arguments?.length > 40 ? tc.arguments.slice(0, 40) + "..." : tc.arguments || "";
+    }
+
+    // Status icon
+    let statusIcon;
+    if (status === "done") statusIcon = `<span class="tool-exec-status done">${TOOL_ICONS.check}</span>`;
+    else if (status === "error") statusIcon = `<span class="tool-exec-status error">${TOOL_ICONS.error}</span>`;
+    else if (status === "executing") statusIcon = `<span class="tool-exec-status executing">${TOOL_ICONS.spinner}</span>`;
+    else if (status === "pending") statusIcon = `<span class="tool-exec-status pending">${TOOL_ICONS.pending}</span>`;
+    else statusIcon = `<span class="tool-exec-status queued"><span class="tool-exec-dot"></span></span>`;
+
+    html += `<div class="tool-exec-item" data-status="${status}" data-tool-index="${j}">`;
+    html += `<div class="tool-exec-item-header" onclick="toggleToolItem(this)">`;
+    html += statusIcon;
+    html += `<span class="tool-exec-name">${escapeHtml(tc.name)}</span>`;
+    if (argsSummary) {
+      html += `<span class="tool-exec-summary">${escapeHtml(argsSummary)}</span>`;
+    }
+    html += `<span class="tool-exec-item-chevron">${TOOL_ICONS.chevronDown}</span>`;
+    html += `</div>`;
+
+    // Expandable detail body
+    html += `<div class="tool-exec-item-body">`;
+    html += `<div class="tool-exec-section">`;
+    html += `<div class="tool-exec-section-label">Arguments</div>`;
+    html += `<pre class="tool-exec-args"><code>${escapeHtml(argsDisplay)}</code></pre>`;
+    html += `</div>`;
+
+    if (result) {
+      const resultClass = result.isError ? "is-error" : "";
+      html += `<div class="tool-exec-section tool-exec-result-section">`;
+      html += `<div class="tool-exec-section-label">${result.isError ? "Error" : "Result"}</div>`;
+      const resultText = result.content || "";
+      const isLong = resultText.length > 500;
+      html += `<div class="tool-exec-result-content ${resultClass} ${isLong ? "truncatable" : ""}" ${isLong ? 'onclick="this.classList.toggle(\'expanded\')"' : ""}>`;
+      html += renderMarkdown(resultText);
+      if (isLong) {
+        html += `<div class="tool-exec-result-fade"></div>`;
+      }
+      html += `</div>`;
+      html += `</div>`;
+    }
+
+    html += `</div>`; // item-body
+    html += `</div>`; // item
+  }
+
+  html += `</div>`; // items
+  html += `</div>`; // block
+
+  return html;
+}
+
+// Global toggle functions for tool execution blocks
+window.toggleToolBlock = function(headerEl) {
+  headerEl.closest(".tool-exec-block").classList.toggle("collapsed");
+};
+window.toggleToolItem = function(headerEl) {
+  headerEl.closest(".tool-exec-item").classList.toggle("expanded");
+};
+window.approveToolCalls = function(index) {
+  if (state._pendingToolApproval) {
+    state._pendingToolApproval.resolve(true);
+    state._pendingToolApproval = null;
+  }
+};
+window.rejectToolCalls = function(index) {
+  if (state._pendingToolApproval) {
+    state._pendingToolApproval.resolve(false);
+    state._pendingToolApproval = null;
+  }
+};
 
 /**
  * Build the token stats badge HTML for a single message.
@@ -1612,18 +1805,76 @@ function buildApiMessages(chat) {
 
 /**
  * Execute MCP tool calls and add results to the chat.
+ * Shows real-time per-tool progress with spinners.
+ * Supports tool approval mode (human-in-the-loop).
  */
 async function executeToolCalls(chat, toolCalls) {
+  const toolCallMsgIndex = chat.messages.length;
+
   // Add tool-call display message
   chat.messages.push({
     role: "tool_call",
     content: toolCalls.map(tc => `${tc.name}(${tc.arguments})`).join("\n"),
     _toolCallData: toolCalls,
+    _pendingApproval: state.toolApproval,
   });
   renderMessages();
+  scrollToBottom();
+
+  // If approval mode, wait for user decision
+  if (state.toolApproval) {
+    const approved = await new Promise(resolve => {
+      state._pendingToolApproval = { resolve };
+    });
+
+    chat.messages[toolCallMsgIndex]._pendingApproval = false;
+
+    if (!approved) {
+      // User rejected — add rejection result and return
+      const rejResults = toolCalls.map(tc => ({
+        callId: tc.id,
+        name: tc.name,
+        content: "Tool execution was rejected by the user.",
+        isError: true,
+      }));
+
+      const apiMessages = buildToolResultMessages(state.provider, toolCalls, rejResults);
+      chat.messages.push({
+        role: "tool_result",
+        content: rejResults.map(r => `${r.name}: ${r.content}`).join("\n\n"),
+        _results: rejResults,
+        _apiMessages: apiMessages,
+      });
+      annotateAssistantWithToolCalls(chat, toolCalls);
+      renderMessages();
+      saveState();
+      return;
+    }
+
+    // Approved — update the display and continue
+    renderMessages();
+  }
+
+  // Get the tool execution block DOM element for live updates
+  const execBlock = dom.messages.querySelector(`.tool-exec-block[data-index="${toolCallMsgIndex}"]`);
 
   const results = [];
-  for (const tc of toolCalls) {
+  for (let i = 0; i < toolCalls.length; i++) {
+    const tc = toolCalls[i];
+
+    // Update item to "executing" in the DOM
+    if (execBlock) {
+      const item = execBlock.querySelector(`.tool-exec-item[data-tool-index="${i}"]`);
+      if (item) {
+        item.dataset.status = "executing";
+        const statusEl = item.querySelector(".tool-exec-status");
+        if (statusEl) {
+          statusEl.className = "tool-exec-status executing";
+          statusEl.innerHTML = TOOL_ICONS.spinner;
+        }
+      }
+    }
+
     try {
       const args = typeof tc.arguments === "string" ? safeParseJSON(tc.arguments) : tc.arguments;
       const result = await mcpManager.executeTool(tc.name, args);
@@ -1642,6 +1893,46 @@ async function executeToolCalls(chat, toolCalls) {
         isError: true,
       });
     }
+
+    // Update item to "done" or "error" in the DOM
+    const r = results[results.length - 1];
+    if (execBlock) {
+      const item = execBlock.querySelector(`.tool-exec-item[data-tool-index="${i}"]`);
+      if (item) {
+        item.dataset.status = r.isError ? "error" : "done";
+        const statusEl = item.querySelector(".tool-exec-status");
+        if (statusEl) {
+          statusEl.className = `tool-exec-status ${r.isError ? "error" : "done"}`;
+          statusEl.innerHTML = r.isError ? TOOL_ICONS.error : TOOL_ICONS.check;
+        }
+        // Append result into item body
+        const body = item.querySelector(".tool-exec-item-body");
+        if (body && !body.querySelector(".tool-exec-result-section")) {
+          const section = document.createElement("div");
+          section.className = "tool-exec-section tool-exec-result-section";
+          const resultText = r.content || "";
+          const isLong = resultText.length > 500;
+          section.innerHTML = `<div class="tool-exec-section-label">${r.isError ? "Error" : "Result"}</div>`
+            + `<div class="tool-exec-result-content ${r.isError ? "is-error" : ""} ${isLong ? "truncatable" : ""}">`
+            + renderMarkdown(resultText)
+            + (isLong ? `<div class="tool-exec-result-fade"></div>` : "")
+            + `</div>`;
+          body.appendChild(section);
+        }
+      }
+    }
+  }
+
+  // Update header badge
+  if (execBlock) {
+    const header = execBlock.querySelector(".tool-exec-header");
+    const oldBadge = header?.querySelector(".tool-exec-badge");
+    if (oldBadge) {
+      const hasErrors = results.some(r_ => r_.isError);
+      oldBadge.className = `tool-exec-badge ${hasErrors ? "error" : "success"}`;
+      oldBadge.innerHTML = hasErrors ? "error" : "done";
+    }
+    execBlock.dataset.executing = "false";
   }
 
   // Build provider-formatted messages for the API
@@ -1655,8 +1946,17 @@ async function executeToolCalls(chat, toolCalls) {
     _apiMessages: apiMessages,
   });
 
-  // Also save tool_calls metadata on the previous assistant message for API rebuild
-  // Find the last assistant message and annotate it
+  // Annotate the last assistant message with tool_calls metadata
+  annotateAssistantWithToolCalls(chat, toolCalls);
+
+  saveState();
+}
+
+/**
+ * Annotate the last assistant message in the chat with tool_calls metadata
+ * so it can be correctly rebuilt for the API in future rounds.
+ */
+function annotateAssistantWithToolCalls(chat, toolCalls) {
   for (let i = chat.messages.length - 1; i >= 0; i--) {
     if (chat.messages[i].role === "assistant") {
       chat.messages[i]._toolCalls = toolCalls.map(tc => ({
@@ -1667,9 +1967,6 @@ async function executeToolCalls(chat, toolCalls) {
       break;
     }
   }
-
-  renderMessages();
-  saveState();
 }
 
 async function handleStreamingResponse(response, chat) {
@@ -1866,6 +2163,7 @@ function loadState() {
     state.streaming = settings.streaming ?? true;
     state.corsProxy = settings.corsProxy || "";
     state.modality = settings.modality || "chat";
+    state.toolApproval = settings.toolApproval || false;
 
     // Load chats
     const chats = JSON.parse(localStorage.getItem("agentloop_chats") || "[]");
@@ -1888,6 +2186,7 @@ function saveState() {
       streaming: state.streaming,
       corsProxy: state.corsProxy,
       modality: state.modality,
+      toolApproval: state.toolApproval,
     }));
 
     localStorage.setItem("agentloop_chats", JSON.stringify(state.chats));
@@ -2064,6 +2363,66 @@ function buildCacheRing(pct) {
     <text x="36" y="36" text-anchor="middle" dominant-baseline="central"
       font-size="14" font-weight="700" fill="var(--text-primary)">${pct}%</text>
   </svg>`;
+}
+
+// ─── MCP Dropdown (Quick Access) ─────────────────────────────────────────────
+
+function toggleMcpDropdown(e) {
+  e.stopPropagation();
+  if (!dom.mcpDropdown) return;
+
+  const isVisible = dom.mcpDropdown.style.display === "block";
+  if (isVisible) {
+    dom.mcpDropdown.style.display = "none";
+    return;
+  }
+
+  // Build dropdown content
+  const servers = typeof mcpManager !== "undefined" ? mcpManager.servers : [];
+  const tools = typeof mcpManager !== "undefined" ? mcpManager.getAllTools() : [];
+
+  let html = `<div class="mcp-dropdown-header">`;
+  html += `<span class="mcp-dropdown-title">MCP Tools</span>`;
+  html += `<button class="btn btn-ghost btn-sm" onclick="openSettingsModal('mcp'); document.getElementById('mcp-dropdown').style.display='none'">Manage</button>`;
+  html += `</div>`;
+
+  if (servers.length === 0) {
+    html += `<div class="mcp-dropdown-empty">`;
+    html += `<p>No MCP servers connected</p>`;
+    html += `<button class="btn btn-primary btn-sm" onclick="openSettingsModal('mcp'); document.getElementById('mcp-dropdown').style.display='none'">Add Server</button>`;
+    html += `</div>`;
+  } else {
+    // Server status pills
+    html += `<div class="mcp-dropdown-servers">`;
+    for (const s of servers) {
+      const dot = s.status === "connected" ? "connected" : s.status === "error" ? "error" : "connecting";
+      html += `<span class="mcp-dropdown-server-pill mcp-dot-${dot}" title="${escapeAttr(s.url)}">`;
+      html += `<span class="mcp-server-dot mcp-dot-${dot}"></span>`;
+      html += `${escapeHtml(s.name)}`;
+      if (s.status === "connected") html += ` <span class="muted">(${s.tools.length})</span>`;
+      html += `</span>`;
+    }
+    html += `</div>`;
+
+    // Tool list
+    if (tools.length > 0) {
+      html += `<div class="mcp-dropdown-tools">`;
+      for (const t of tools) {
+        html += `<div class="mcp-dropdown-tool">`;
+        html += `<span class="mcp-dropdown-tool-name">${escapeHtml(t.name)}</span>`;
+        if (t.description) {
+          html += `<span class="mcp-dropdown-tool-desc">${escapeHtml(t.description.length > 80 ? t.description.slice(0, 80) + "..." : t.description)}</span>`;
+        }
+        html += `</div>`;
+      }
+      html += `</div>`;
+    } else {
+      html += `<div class="mcp-dropdown-empty"><p>Connected servers have no tools</p></div>`;
+    }
+  }
+
+  dom.mcpDropdown.innerHTML = html;
+  dom.mcpDropdown.style.display = "block";
 }
 
 // ─── MCP Server Management ──────────────────────────────────────────────────
