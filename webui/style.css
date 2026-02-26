@@ -2278,62 +2278,254 @@ select {
   margin-top: 2px;
 }
 
-/* ─── MCP — Tool Call / Result Messages ────────────────────────────────── */
+/* ─── Tool Execution Block (Unified Tool Call + Result) ────────────────── */
 
-.message.tool-call {
-  background: color-mix(in srgb, var(--warning) 8%, var(--bg-primary));
-  border: 1px solid color-mix(in srgb, var(--warning) 20%, transparent);
-  padding: 10px 16px;
+.tool-exec-block {
+  margin: 8px 48px 8px 56px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--bg-secondary);
 }
 
-.message.tool-call .message-avatar {
-  width: 28px;
-  height: 28px;
-  background: color-mix(in srgb, var(--warning) 20%, var(--bg-tertiary));
-  color: var(--warning);
+.tool-exec-header {
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--transition);
 }
 
-.message.tool-result {
-  background: color-mix(in srgb, var(--success) 6%, var(--bg-primary));
-  border: 1px solid color-mix(in srgb, var(--success) 15%, transparent);
-  padding: 10px 16px;
+.tool-exec-header:hover {
+  background: var(--bg-hover);
 }
 
-.message.tool-result .message-avatar {
-  width: 28px;
-  height: 28px;
-  background: color-mix(in srgb, var(--success) 20%, var(--bg-tertiary));
+.tool-exec-icon {
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.tool-exec-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.tool-exec-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.tool-exec-badge.success {
+  background: color-mix(in srgb, var(--success) 15%, transparent);
   color: var(--success);
+}
+
+.tool-exec-badge.error {
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  color: var(--danger);
+}
+
+.tool-exec-badge.executing {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+}
+
+.tool-exec-badge.pending {
+  background: color-mix(in srgb, var(--warning) 15%, transparent);
+  color: var(--warning);
+}
+
+.tool-exec-spinner {
+  display: inline-flex;
+  animation: tool-spin 1s linear infinite;
+}
+
+@keyframes tool-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.tool-exec-chevron {
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  transition: transform var(--transition);
+  flex-shrink: 0;
+}
+
+.tool-exec-block.collapsed .tool-exec-chevron {
+  transform: rotate(-90deg);
+}
+
+.tool-exec-block.collapsed .tool-exec-items {
+  display: none;
+}
+
+.tool-exec-block.collapsed .tool-exec-approval {
+  display: none;
+}
+
+/* ─── Tool Approval Buttons ────────────────────────────────────────────── */
+
+.tool-exec-approval {
+  display: flex;
+  gap: 8px;
+  padding: 8px 14px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tool-approve-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tool-reject-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ─── Tool Execution Items ─────────────────────────────────────────────── */
+
+.tool-exec-items {
+  border-top: 1px solid var(--border);
+}
+
+.tool-exec-item {
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+
+.tool-exec-item:last-child {
+  border-bottom: none;
+}
+
+.tool-exec-item-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--transition);
+}
+
+.tool-exec-item-header:hover {
+  background: var(--bg-hover);
+}
+
+/* Status indicators */
+.tool-exec-status {
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
-.tool-call-block {
-  margin-bottom: 6px;
+.tool-exec-status.done {
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+  color: var(--success);
 }
 
-.tool-call-block:last-child {
-  margin-bottom: 0;
+.tool-exec-status.error {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  color: var(--danger);
 }
 
-.tool-call-name {
+.tool-exec-status.executing {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  animation: tool-spin 1s linear infinite;
+}
+
+.tool-exec-status.pending {
+  background: color-mix(in srgb, var(--warning) 15%, transparent);
+  color: var(--warning);
+}
+
+.tool-exec-status.queued {
+  background: var(--bg-tertiary);
+}
+
+.tool-exec-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.tool-exec-name {
   font-family: var(--font-mono);
   font-size: 12px;
   font-weight: 600;
-  color: var(--warning);
+  color: var(--text-primary);
+}
+
+.tool-exec-summary {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.tool-exec-item-chevron {
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  transition: transform var(--transition);
+  flex-shrink: 0;
+}
+
+.tool-exec-item.expanded .tool-exec-item-chevron {
+  transform: rotate(180deg);
+}
+
+/* Expandable detail body */
+.tool-exec-item-body {
+  display: none;
+  padding: 0 14px 10px;
+}
+
+.tool-exec-item.expanded .tool-exec-item-body {
+  display: block;
+}
+
+.tool-exec-section {
+  margin-top: 8px;
+}
+
+.tool-exec-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
   margin-bottom: 4px;
 }
 
-.tool-call-args {
+.tool-exec-args {
   margin: 0;
   border-radius: var(--radius);
 }
 
-.tool-call-args code {
+.tool-exec-args code {
   display: block;
   padding: 8px 10px;
   font-size: 11px;
@@ -2341,38 +2533,166 @@ select {
   background: var(--code-bg);
   border-radius: var(--radius);
   overflow-x: auto;
+  max-height: 200px;
+  overflow-y: auto;
 }
 
-.tool-result-block {
-  margin-bottom: 6px;
-}
-
-.tool-result-block:last-child {
-  margin-bottom: 0;
-}
-
-.tool-result-name {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--success);
-  margin-bottom: 2px;
-}
-
-.tool-result-block.tool-result-error .tool-result-name {
-  color: var(--danger);
-}
-
-.tool-result-content {
+.tool-exec-result-content {
   font-size: 12px;
   color: var(--text-secondary);
   line-height: 1.5;
+  padding: 8px 10px;
+  background: var(--code-bg);
+  border-radius: var(--radius);
+  max-height: 150px;
+  overflow-y: hidden;
+  position: relative;
 }
 
-.tool-result-content p {
+.tool-exec-result-content.truncatable {
+  cursor: pointer;
+}
+
+.tool-exec-result-content.truncatable.expanded {
+  max-height: none;
+}
+
+.tool-exec-result-content.is-error {
+  border-left: 3px solid var(--danger);
+}
+
+.tool-exec-result-content p {
   margin-bottom: 4px;
 }
 
-.tool-result-content p:last-child {
+.tool-exec-result-content p:last-child {
   margin-bottom: 0;
+}
+
+.tool-exec-result-fade {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  background: linear-gradient(transparent, var(--code-bg));
+  pointer-events: none;
+}
+
+.tool-exec-result-content.expanded .tool-exec-result-fade {
+  display: none;
+}
+
+/* ─── MCP Dropdown (Quick Access Popover) ──────────────────────────────── */
+
+#mcp-dropdown {
+  position: absolute;
+  top: calc(var(--topbar-height) + 4px);
+  right: 100px;
+  width: 320px;
+  max-height: 420px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  z-index: 100;
+  overflow-y: auto;
+  display: none;
+}
+
+.mcp-dropdown-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mcp-dropdown-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.mcp-dropdown-empty {
+  padding: 20px 14px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.mcp-dropdown-empty p {
+  margin-bottom: 10px;
+}
+
+.mcp-dropdown-servers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mcp-dropdown-server-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 10px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.mcp-dropdown-server-pill .mcp-server-dot {
+  width: 6px;
+  height: 6px;
+}
+
+.mcp-dropdown-tools {
+  padding: 6px 0;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.mcp-dropdown-tool {
+  padding: 6px 14px;
+  transition: background var(--transition);
+}
+
+.mcp-dropdown-tool:hover {
+  background: var(--bg-hover);
+}
+
+.mcp-dropdown-tool-name {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  display: block;
+}
+
+.mcp-dropdown-tool-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.3;
+  display: block;
+  margin-top: 1px;
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+/* ─── Responsive: Tool blocks on mobile ────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .tool-exec-block {
+    margin: 6px 8px;
+  }
+  #mcp-dropdown {
+    right: 8px;
+    width: calc(100vw - 16px);
+  }
 }
