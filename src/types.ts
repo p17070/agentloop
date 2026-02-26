@@ -354,7 +354,8 @@ export interface EmbedResponse {
 export type ProviderId =
   | "openai" | "anthropic" | "google" | "groq" | "together"
   | "mistral" | "deepseek" | "fireworks" | "perplexity"
-  | "ollama" | "cohere" | "xai";
+  | "ollama" | "cohere" | "xai" | "moonshot" | "cerebras"
+  | "sambanova" | "ai21";
 
 /** Model capability category */
 export type ModelCategory =
