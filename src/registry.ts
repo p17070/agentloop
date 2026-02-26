@@ -81,6 +81,26 @@ export const PROVIDERS: Record<string, ProviderEntry> = {
     baseURL: "https://api.x.ai/v1",
     auth: "bearer",
   },
+
+  moonshot: {
+    baseURL: "https://api.moonshot.ai/v1",
+    auth: "bearer",
+  },
+
+  cerebras: {
+    baseURL: "https://api.cerebras.ai/v1",
+    auth: "bearer",
+  },
+
+  sambanova: {
+    baseURL: "https://api.sambanova.ai/v1",
+    auth: "bearer",
+  },
+
+  ai21: {
+    baseURL: "https://api.ai21.com/studio/v1",
+    auth: "bearer",
+  },
 };
 
 // ─── Parameter Filter ───────────────────────────────────────────────────────

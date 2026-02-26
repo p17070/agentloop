@@ -80,6 +80,30 @@ export const PROVIDER_INFO: Record<ProviderId, ProviderInfo> = {
     apiKeyEnv: "XAI_API_KEY",
     website: "https://x.ai",
   },
+  moonshot: {
+    id: "moonshot",
+    name: "Moonshot AI",
+    apiKeyEnv: "MOONSHOT_API_KEY",
+    website: "https://platform.moonshot.ai",
+  },
+  cerebras: {
+    id: "cerebras",
+    name: "Cerebras",
+    apiKeyEnv: "CEREBRAS_API_KEY",
+    website: "https://cerebras.ai",
+  },
+  sambanova: {
+    id: "sambanova",
+    name: "SambaNova",
+    apiKeyEnv: "SAMBANOVA_API_KEY",
+    website: "https://sambanova.ai",
+  },
+  ai21: {
+    id: "ai21",
+    name: "AI21 Labs",
+    apiKeyEnv: "AI21_API_KEY",
+    website: "https://www.ai21.com",
+  },
 };
 
 // ─── Model Catalog ─────────────────────────────────────────────────────────
@@ -261,6 +285,47 @@ export const MODEL_CATALOG: ModelInfo[] = [
 
   // Code
   { id: "grok-code-fast-1", name: "Grok Code", provider: "xai", categories: ["code"], contextWindow: 256_000 },
+
+  // ── Moonshot AI (Kimi) ─────────────────────────────────────────────
+
+  // Kimi K2.5 (latest)
+  { id: "kimi-k2.5", name: "Kimi K2.5", provider: "moonshot", categories: ["flagship", "vision", "reasoning"], contextWindow: 256_000, isDefault: true },
+
+  // Kimi K2
+  { id: "kimi-k2-0905-preview", name: "Kimi K2", provider: "moonshot", categories: ["flagship"], contextWindow: 256_000 },
+  { id: "kimi-k2-thinking", name: "Kimi K2 Thinking", provider: "moonshot", categories: ["reasoning"], contextWindow: 256_000 },
+
+  // Moonshot V1 (legacy)
+  { id: "moonshot-v1-128k", name: "Moonshot V1 128K", provider: "moonshot", categories: ["flagship"], contextWindow: 128_000 },
+  { id: "moonshot-v1-32k", name: "Moonshot V1 32K", provider: "moonshot", categories: ["fast"], contextWindow: 32_000 },
+
+  // ── Cerebras ──────────────────────────────────────────────────────
+
+  { id: "gpt-oss-120b", name: "GPT-OSS 120B", provider: "cerebras", categories: ["flagship"], contextWindow: 128_000, isDefault: true },
+  { id: "qwen-3-235b-a22b-instruct-2507", name: "Qwen 3 235B", provider: "cerebras", categories: ["flagship", "reasoning"], contextWindow: 131_000 },
+  { id: "zai-glm-4.7", name: "GLM-4.7", provider: "cerebras", categories: ["flagship"], contextWindow: 128_000 },
+  { id: "llama3.1-8b", name: "Llama 3.1 8B", provider: "cerebras", categories: ["fast"], contextWindow: 128_000 },
+
+  // ── SambaNova ─────────────────────────────────────────────────────
+
+  // DeepSeek on SambaNova
+  { id: "DeepSeek-V3.1", name: "DeepSeek V3.1", provider: "sambanova", categories: ["flagship"], contextWindow: 128_000, isDefault: true },
+  { id: "DeepSeek-R1-0528", name: "DeepSeek R1", provider: "sambanova", categories: ["reasoning"], contextWindow: 128_000 },
+  { id: "DeepSeek-V3-0324", name: "DeepSeek V3", provider: "sambanova", categories: ["flagship"], contextWindow: 128_000 },
+
+  // Llama on SambaNova
+  { id: "Llama-4-Maverick-17B-128E-Instruct", name: "Llama 4 Maverick", provider: "sambanova", categories: ["flagship", "vision"], contextWindow: 128_000 },
+  { id: "Meta-Llama-3.3-70B-Instruct", name: "Llama 3.3 70B", provider: "sambanova", categories: ["flagship"], contextWindow: 128_000 },
+  { id: "Meta-Llama-3.1-8B-Instruct", name: "Llama 3.1 8B", provider: "sambanova", categories: ["fast"], contextWindow: 128_000 },
+
+  // Qwen on SambaNova
+  { id: "Qwen3-235B-A22B-Instruct-2507", name: "Qwen 3 235B", provider: "sambanova", categories: ["flagship", "reasoning"], contextWindow: 128_000 },
+  { id: "Qwen3-32B", name: "Qwen 3 32B", provider: "sambanova", categories: ["fast", "reasoning"], contextWindow: 128_000 },
+
+  // ── AI21 Labs ─────────────────────────────────────────────────────
+
+  { id: "jamba-large", name: "Jamba Large", provider: "ai21", categories: ["flagship"], contextWindow: 256_000, isDefault: true },
+  { id: "jamba-mini", name: "Jamba Mini", provider: "ai21", categories: ["fast"], contextWindow: 256_000 },
 
   // ── Ollama (local) ──────────────────────────────────────────────────────
 
